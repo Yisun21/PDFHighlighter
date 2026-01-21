@@ -40,7 +40,7 @@ with st.sidebar:
 
     st.subheader("2. 词库 (Excel)")
     uploaded_excels = st.file_uploader(
-        "上传词库 (.xlsx)",
+        "上传词库（单词放Excel表格第一列） (.xlsx)",
         type=['xlsx'],
         accept_multiple_files=True
     )
@@ -54,7 +54,7 @@ with st.sidebar:
                         'words': words,
                         'default_color': '#FFFF00'
                     }
-                    st.toast(f"已缓存: {excel_file.name}")
+                    st.toast(f"✅ 已缓存: {excel_file.name} (共 {len(words)} 词)")
 
     with st.expander("➕ 手动添加"):
         manual_name = st.text_input("词库名")
@@ -81,7 +81,8 @@ with st.sidebar:
             for name in selected:
                 col1, col2 = st.columns([3, 1])
                 with col1:
-                    st.caption(f"{name}")
+                    count = len(st.session_state['word_libraries'][name]['words'])
+                    st.caption(f"**{name}** ({count} 词)")
                 with col2:
                     c = st.color_picker(f"C-{name}", st.session_state['word_libraries'][name]['default_color'],
                                         key=f"c_{name}")
