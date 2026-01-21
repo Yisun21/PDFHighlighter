@@ -3,207 +3,209 @@ import fitz  # PyMuPDF
 import pandas as pd
 import tempfile
 import os
-import base64
+import gc  # 垃圾回收
 
 # --- 页面配置 ---
-st.set_page_config(page_title="PDF 多色高亮 Pro Max", page_icon="🎨", layout="wide")
-
-# --- 初始化 Session State (核心数据存储) ---
-# word_libraries 结构: {'词库名': {'words': ['word1', 'word2'], 'default_color': '#FFFF00'}}
-if 'word_libraries' not in st.session_state:
-    st.session_state['word_libraries'] = {}
+st.set_page_config(page_title="PDF 全词匹配高亮工具", page_icon="🎯", layout="wide")
 
 
-# --- 辅助函数 ---
-def display_pdf(file_path):
-    """生成 PDF 预览"""
-    with open(file_path, "rb") as f:
-        base64_pdf = base64.b64encode(f.read()).decode('utf-8')
-    pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf"></iframe>'
-    st.markdown(pdf_display, unsafe_allow_html=True)
+# --- 缓存函数 ---
+@st.cache_data(ttl=3600)
+def load_excel_data(file):
+    try:
+        df = pd.read_excel(file)
+        # 读取第一列，去重，转字符串，去除首尾空格
+        return df.iloc[:, 0].dropna().astype(str).str.strip().unique().tolist()
+    except Exception:
+        return []
 
 
 def hex_to_rgb(hex_color):
-    """Hex 颜色转 RGB (0-1)"""
     hex_color = hex_color.lstrip('#')
     return tuple(int(hex_color[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
 
 
+# --- 初始化 Session State ---
+if 'word_libraries' not in st.session_state:
+    st.session_state['word_libraries'] = {}
+
 # --- 侧边栏 UI ---
 with st.sidebar:
-    st.title("🛠️ 设置面板")
+    st.title("🎯 精准设置")
 
-    # 1. 文件上传
-    st.subheader("1. 上传 PDF")
-    uploaded_pdf = st.file_uploader("选择论文文件", type=["pdf"], label_visibility="collapsed")
+    st.subheader("1. 文件")
+    uploaded_pdf = st.file_uploader("上传 PDF", type=["pdf"], label_visibility="collapsed")
 
     st.divider()
 
-    # 2. 词库管理 (支持多文件上传)
-    st.subheader("2. 导入词库 (Excel)")
-    # accept_multiple_files=True 允许一次选多个文件
+    st.subheader("2. 词库 (Excel)")
     uploaded_excels = st.file_uploader(
-        "上传多个 Excel (.xlsx)",
+        "上传词库 (.xlsx)",
         type=['xlsx'],
         accept_multiple_files=True
     )
 
-    # 处理上传的 Excel
     if uploaded_excels:
         for excel_file in uploaded_excels:
-            # 如果这个文件还没被加载过，才去读取
             if excel_file.name not in st.session_state['word_libraries']:
-                try:
-                    df = pd.read_excel(excel_file)
-                    # 默认读取第一列，去重，转字符串
-                    words = df.iloc[:, 0].dropna().astype(str).unique().tolist()
-                    # 存入 Session State
+                words = load_excel_data(excel_file)
+                if words:
                     st.session_state['word_libraries'][excel_file.name] = {
                         'words': words,
-                        'default_color': '#FFFF00'  # 默认黄色
+                        'default_color': '#FFFF00'
                     }
-                    st.toast(f"✅ 已加载: {excel_file.name} ({len(words)}词)")
-                except Exception as e:
-                    st.error(f"{excel_file.name} 读取失败: {e}")
+                    st.toast(f"已缓存: {excel_file.name}")
 
-    # 手动添加词库的功能
-    with st.expander("➕ 手动添加临时词库"):
-        manual_name = st.text_input("给词库起个名", placeholder="例如: 重点词汇")
-        manual_text = st.text_area("输入单词 (逗号或换行分隔)", height=100)
-        if st.button("添加手动词库"):
+    with st.expander("➕ 手动添加"):
+        manual_name = st.text_input("词库名")
+        manual_text = st.text_area("单词列表")
+        if st.button("添加"):
             if manual_name and manual_text:
                 words = [w.strip() for w in manual_text.replace('\n', ',').split(',') if w.strip()]
                 st.session_state['word_libraries'][manual_name] = {
                     'words': words,
-                    'default_color': '#00FF00'  # 手动默认绿色
+                    'default_color': '#00FF00'
                 }
-                st.success(f"已添加 {manual_name}")
                 st.rerun()
 
     st.divider()
 
-    # 3. 词库配置与颜色选择
-    st.subheader("3. 启用与配色")
+    st.subheader("3. 颜色配置")
+    final_configs = {}
 
-    if not st.session_state['word_libraries']:
-        st.info("👈 请先上传 Excel 或手动添加词库")
-        final_configs = {}
-    else:
-        # 多选框：选择要使用哪些词库
+    if st.session_state['word_libraries']:
         all_libs = list(st.session_state['word_libraries'].keys())
-        selected_lib_names = st.multiselect(
-            "选择要使用的高亮词库",
-            all_libs,
-            default=all_libs
-        )
+        selected = st.multiselect("选择词库", all_libs, default=all_libs)
 
-        # 动态生成颜色选择器
-        final_configs = {}  # 存储最终的配置: {'词库名': {'words': [], 'rgb': (1,1,0)}}
-
-        if selected_lib_names:
-            st.write("🎨 为每个词库设置颜色:")
-            for name in selected_lib_names:
+        if selected:
+            for name in selected:
                 col1, col2 = st.columns([3, 1])
                 with col1:
-                    st.caption(f"**{name}** ({len(st.session_state['word_libraries'][name]['words'])} 词)")
+                    st.caption(f"{name}")
                 with col2:
-                    # 获取该词库之前的颜色设置，如果没有则用默认
-                    current_hex = st.color_picker(
-                        f"颜色-{name}",
-                        st.session_state['word_libraries'][name]['default_color'],
-                        key=f"picker_{name}",
-                        label_visibility="collapsed"
-                    )
+                    c = st.color_picker(f"C-{name}", st.session_state['word_libraries'][name]['default_color'],
+                                        key=f"c_{name}")
 
-                # 保存配置
                 final_configs[name] = {
                     'words': st.session_state['word_libraries'][name]['words'],
-                    'rgb': hex_to_rgb(current_hex)
+                    'rgb': hex_to_rgb(c)
                 }
 
     st.divider()
-    process_btn = st.button("🚀 开始多色高亮", type="primary", use_container_width=True)
-
-    # 清空历史按钮
-    if st.button("🗑️ 清空所有词库缓存"):
+    process_btn = st.button("🚀 开始精准匹配", type="primary", use_container_width=True)
+    if st.button("🗑️ 清除缓存"):
         st.session_state['word_libraries'] = {}
+        st.cache_data.clear()
         st.rerun()
 
 # --- 主界面 ---
-st.title("🎨 PDF 多源词库高亮工具")
-
-if not uploaded_pdf:
-    st.info("请在左侧上传 PDF 并配置词库。")
+st.title("🎯 PDF 全词匹配高亮工具")
+st.markdown("已启用 **Whole Word Matching** 模式：精确匹配单词，拒绝部分匹配。")
 
 if process_btn and uploaded_pdf and final_configs:
-    col1, col2 = st.columns([1, 1])
 
-    with st.spinner("正在进行多色图层渲染..."):
-        try:
-            # 1. 准备文件
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_input:
-                tmp_input.write(uploaded_pdf.getvalue())
-                tmp_input_path = tmp_input.name
+    progress_bar = st.progress(0)
+    status_text = st.empty()
 
-            doc = fitz.open(tmp_input_path)
-            total_stats = {name: 0 for name in final_configs}  # 统计每个词库高亮了多少个
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_input:
+            tmp_input.write(uploaded_pdf.getvalue())
+            tmp_input_path = tmp_input.name
 
-            # 2. 核心处理循环
-            progress_bar = st.progress(0)
+        doc = fitz.open(tmp_input_path)
+        total_pages = len(doc)
+        total_stats = {name: 0 for name in final_configs}
 
-            for i, page in enumerate(doc):
-                progress_bar.progress((i + 1) / len(doc))
+        status_text.text("🔍 正在初始化精准匹配引擎...")
 
-                # 针对每一页，遍历所有选中的词库
-                for lib_name, config in final_configs.items():
-                    words = config['words']
-                    color_rgb = config['rgb']
+        # --- 预处理词库：区分单词和短语 ---
+        # 单词：用 get_text("words") 做全等匹配 (解决 cat 匹配 scatter)
+        # 短语：用 search_for 做搜索匹配 (解决 Deep Learning 带空格问题)
+        processed_configs = {}
+        for name, config in final_configs.items():
+            words_list = config['words']
+            single_words = set()  # 用集合加速查找
+            phrases = []
 
-                    for word in words:
-                        # 搜索单词
-                        quads = page.search_for(word, quads=True)
+            for w in words_list:
+                clean_w = w.strip()
+                if " " in clean_w:  # 如果包含空格，视为短语
+                    phrases.append(clean_w)
+                else:
+                    single_words.add(clean_w.lower())  # 转小写存入集合
 
-                        # 应用高亮
+            processed_configs[name] = {
+                'singles': single_words,
+                'phrases': phrases,
+                'color': config['rgb']
+            }
+
+        # --- 核心循环 ---
+        for i, page in enumerate(doc):
+            if i % 5 == 0:
+                progress_bar.progress((i + 1) / total_pages)
+                status_text.text(f"正在分析第 {i + 1} / {total_pages} 页...")
+
+            # 1. 处理所有“单个单词” (全词匹配逻辑)
+            # 获取页面所有单词: (x0, y0, x1, y1, "word_string", ...)
+            page_words = page.get_text("words")
+
+            for w_info in page_words:
+                # w_info[4] 是单词文本
+                current_word_text = w_info[4].lower()
+                current_word_rect = fitz.Rect(w_info[0], w_info[1], w_info[2], w_info[3])
+
+                # 检查这个单词是否在我们的任何一个词库里
+                for lib_name, p_cfg in processed_configs.items():
+                    if current_word_text in p_cfg['singles']:
+                        # 只有完全相等才高亮
+                        annot = page.add_highlight_annot(current_word_rect)
+                        annot.set_colors(stroke=p_cfg['color'])
+                        annot.update()
+                        total_stats[lib_name] += 1
+
+            # 2. 处理“短语” (传统搜索逻辑，因为 get_text("words") 会把短语拆散)
+            for lib_name, p_cfg in processed_configs.items():
+                for phrase in p_cfg['phrases']:
+                    # 短语依然使用 search_for，但通常短语不太容易出现误匹配
+                    quads = page.search_for(phrase, quads=True)
+                    if quads:
                         for quad in quads:
                             annot = page.add_highlight_annot(quad)
-                            annot.set_colors(stroke=color_rgb)
+                            annot.set_colors(stroke=p_cfg['color'])
                             annot.update()
                             total_stats[lib_name] += 1
 
-            # 3. 保存与展示
-            output_path = tmp_input_path.replace(".pdf", "_highlighted.pdf")
-            doc.save(output_path)
-            doc.close()
+        # 保存
+        status_text.text("💾 正在保存...")
+        output_path = tmp_input_path.replace(".pdf", "_highlighted.pdf")
+        doc.save(output_path, garbage=4, deflate=True)
+        doc.close()
 
-            # 显示统计信息
-            st.success("✅ 处理完成！统计如下：")
-            stat_cols = st.columns(len(total_stats))
-            for idx, (name, count) in enumerate(total_stats.items()):
-                # 为了防止列太多挤压，这里简单的用 container
-                st.write(f"**{name}**: {count} 处")
+        progress_bar.progress(100)
+        status_text.text("✅ 完成！")
 
-            # 下载按钮
-            with open(output_path, "rb") as file:
-                st.download_button(
-                    label="📥 下载多色标注版 PDF",
-                    data=file,
-                    file_name=f"MultiColor_{uploaded_pdf.name}",
-                    mime="application/pdf"
-                )
+        # 统计
+        cols = st.columns(len(total_stats))
+        for idx, (name, count) in enumerate(total_stats.items()):
+            cols[idx].metric(label=name, value=count)
 
-            st.divider()
-            st.subheader("📄 效果预览")
-            display_pdf(output_path)
+        # 仅显示下载按钮，无预览
+        with open(output_path, "rb") as file:
+            st.download_button(
+                "📥 下载结果 PDF",
+                data=file,
+                file_name=f"WholeWord_{uploaded_pdf.name}",
+                mime="application/pdf",
+                type="primary"  # 醒目的按钮
+            )
 
-            # 清理
-            os.unlink(tmp_input_path)
-            os.unlink(output_path)
+        os.unlink(tmp_input_path)
+        os.unlink(output_path)
+        gc.collect()
 
-        except Exception as e:
-            st.error(f"处理过程中出错: {e}")
+    except Exception as e:
+        st.error(f"出错: {e}")
 
 elif process_btn:
-    if not uploaded_pdf:
-        st.error("请先上传 PDF 文件！")
-    elif not final_configs:
-        st.error("请至少启用一个词库！")
+    st.error("请检查配置。")
