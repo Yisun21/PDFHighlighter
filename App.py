@@ -3,10 +3,16 @@ import fitz  # PyMuPDF
 import pandas as pd
 import tempfile
 import os
-import gc  # 垃圾回收
+import gc
+import nltk
+from nltk.stem import SnowballStemmer
 
 # --- 页面配置 ---
-st.set_page_config(page_title="PDF 全词匹配高亮工具", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="PDF 智能词库匹配高亮工具", page_icon="📚", layout="wide")
+
+# --- NLTK 初始化 ---
+# 初始化英语词干提取器
+stemmer = SnowballStemmer("english")
 
 
 # --- 缓存函数 ---
@@ -14,7 +20,6 @@ st.set_page_config(page_title="PDF 全词匹配高亮工具", page_icon="🎯", 
 def load_excel_data(file):
     try:
         df = pd.read_excel(file)
-        # 读取第一列，去重，转字符串，去除首尾空格
         return df.iloc[:, 0].dropna().astype(str).str.strip().unique().tolist()
     except Exception:
         return []
@@ -31,7 +36,7 @@ if 'word_libraries' not in st.session_state:
 
 # --- 侧边栏 UI ---
 with st.sidebar:
-    st.title("🎯 精准设置")
+    st.title("📚 智能设置")
 
     st.subheader("1. 文件")
     uploaded_pdf = st.file_uploader("上传 PDF", type=["pdf"], label_visibility="collapsed")
@@ -40,7 +45,7 @@ with st.sidebar:
 
     st.subheader("2. 词库 (Excel)")
     uploaded_excels = st.file_uploader(
-        "上传词库（单词放Excel表格第一列） (.xlsx)",
+        "上传词库（单词放在Excel表格第一列） (.xlsx)",
         type=['xlsx'],
         accept_multiple_files=True
     )
@@ -70,7 +75,12 @@ with st.sidebar:
 
     st.divider()
 
-    st.subheader("3. 颜色配置")
+    st.subheader("3. 匹配与颜色")
+
+    # 新增：模糊匹配开关
+    use_stemming = st.checkbox("启用智能词形匹配 (Stemming)", value=True,
+                               help="勾选后，'run' 可以匹配 'running', 'ran', 'runner' 等")
+
     final_configs = {}
 
     if st.session_state['word_libraries']:
@@ -93,15 +103,18 @@ with st.sidebar:
                 }
 
     st.divider()
-    process_btn = st.button("🚀 开始精准匹配", type="primary", use_container_width=True)
+    process_btn = st.button("🚀 开始智能处理", type="primary", use_container_width=True)
     if st.button("🗑️ 清除缓存"):
         st.session_state['word_libraries'] = {}
         st.cache_data.clear()
         st.rerun()
 
 # --- 主界面 ---
-st.title("🎯 PDF 全词匹配高亮工具")
-st.markdown("已启用 **Whole Word Matching** 模式：精确匹配单词，拒绝部分匹配。")
+st.title("📚 PDF 智能词库匹配高亮工具")
+if use_stemming:
+    st.success("✨ 智能模式已开启：将自动忽略单词的时态、复数和变形。")
+else:
+    st.info("🔒 精确模式：仅匹配完全一致的单词。")
 
 if process_btn and uploaded_pdf and final_configs:
 
@@ -117,26 +130,37 @@ if process_btn and uploaded_pdf and final_configs:
         total_pages = len(doc)
         total_stats = {name: 0 for name in final_configs}
 
-        status_text.text("🔍 正在初始化精准匹配引擎...")
+        status_text.text("🔍 正在构建词根索引...")
 
-        # --- 预处理词库：区分单词和短语 ---
-        # 单词：用 get_text("words") 做全等匹配 (解决 cat 匹配 scatter)
-        # 短语：用 search_for 做搜索匹配 (解决 Deep Learning 带空格问题)
+        # --- 预处理：构建匹配字典 ---
         processed_configs = {}
         for name, config in final_configs.items():
             words_list = config['words']
-            single_words = set()  # 用集合加速查找
+
+            # 我们需要存储两个集合：
+            # 1. singles_stems: 单个单词的词根集合 (用于智能匹配)
+            # 2. singles_exact: 单个单词的原词集合 (用于精确匹配)
+            # 3. phrases: 短语 (短语很难做词根匹配，通常保持原样搜索)
+
+            singles_stems = set()
+            singles_exact = set()
             phrases = []
 
             for w in words_list:
                 clean_w = w.strip()
-                if " " in clean_w:  # 如果包含空格，视为短语
-                    phrases.append(clean_w)
+                if " " in clean_w:
+                    phrases.append(clean_w)  # 短语走传统搜索
                 else:
-                    single_words.add(clean_w.lower())  # 转小写存入集合
+                    lower_w = clean_w.lower()
+                    singles_exact.add(lower_w)
+                    if use_stemming:
+                        # 计算词根，例如 'computing' -> 'comput'
+                        stem_w = stemmer.stem(lower_w)
+                        singles_stems.add(stem_w)
 
             processed_configs[name] = {
-                'singles': single_words,
+                'singles_stems': singles_stems,
+                'singles_exact': singles_exact,
                 'phrases': phrases,
                 'color': config['rgb']
             }
@@ -147,28 +171,37 @@ if process_btn and uploaded_pdf and final_configs:
                 progress_bar.progress((i + 1) / total_pages)
                 status_text.text(f"正在分析第 {i + 1} / {total_pages} 页...")
 
-            # 1. 处理所有“单个单词” (全词匹配逻辑)
-            # 获取页面所有单词: (x0, y0, x1, y1, "word_string", ...)
-            page_words = page.get_text("words")
+            # 1. 处理单个单词 (智能/精确逻辑)
+            page_words = page.get_text("words")  # 获取页面所有单词信息
 
             for w_info in page_words:
-                # w_info[4] 是单词文本
-                current_word_text = w_info[4].lower()
-                current_word_rect = fitz.Rect(w_info[0], w_info[1], w_info[2], w_info[3])
+                current_text = w_info[4].lower()  # PDF中的单词
+                current_rect = fitz.Rect(w_info[0], w_info[1], w_info[2], w_info[3])
 
-                # 检查这个单词是否在我们的任何一个词库里
+                # 如果开启了智能匹配，我们计算当前单词的词根
+                current_stem = stemmer.stem(current_text) if use_stemming else None
+
                 for lib_name, p_cfg in processed_configs.items():
-                    if current_word_text in p_cfg['singles']:
-                        # 只有完全相等才高亮
-                        annot = page.add_highlight_annot(current_word_rect)
+                    matched = False
+
+                    if use_stemming:
+                        # 智能模式：比较词根
+                        if current_stem in p_cfg['singles_stems']:
+                            matched = True
+                    else:
+                        # 精确模式：比较原词
+                        if current_text in p_cfg['singles_exact']:
+                            matched = True
+
+                    if matched:
+                        annot = page.add_highlight_annot(current_rect)
                         annot.set_colors(stroke=p_cfg['color'])
                         annot.update()
                         total_stats[lib_name] += 1
 
-            # 2. 处理“短语” (传统搜索逻辑，因为 get_text("words") 会把短语拆散)
+            # 2. 处理短语 (依然使用 search_for，短语通常不需要词形变化)
             for lib_name, p_cfg in processed_configs.items():
                 for phrase in p_cfg['phrases']:
-                    # 短语依然使用 search_for，但通常短语不太容易出现误匹配
                     quads = page.search_for(phrase, quads=True)
                     if quads:
                         for quad in quads:
@@ -191,14 +224,13 @@ if process_btn and uploaded_pdf and final_configs:
         for idx, (name, count) in enumerate(total_stats.items()):
             cols[idx].metric(label=name, value=count)
 
-        # 仅显示下载按钮，无预览
         with open(output_path, "rb") as file:
             st.download_button(
                 "📥 下载结果 PDF",
                 data=file,
-                file_name=f"WholeWord_{uploaded_pdf.name}",
+                file_name=f"SmartMatch_{uploaded_pdf.name}",
                 mime="application/pdf",
-                type="primary"  # 醒目的按钮
+                type="primary"
             )
 
         os.unlink(tmp_input_path)
