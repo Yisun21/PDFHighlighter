@@ -8,11 +8,14 @@ import nltk
 from nltk.stem import SnowballStemmer
 
 # --- 页面配置 ---
-st.set_page_config(page_title="PDF 智能词库匹配高亮工具", page_icon="📚", layout="wide")
+st.set_page_config(page_title="PDF 智能词库高亮工具", page_icon="📚", layout="wide")
 
 # --- NLTK 初始化 ---
-# 初始化英语词干提取器
-stemmer = SnowballStemmer("english")
+try:
+    stemmer = SnowballStemmer("english")
+except:
+    nltk.download('snowball_data')
+    stemmer = SnowballStemmer("english")
 
 
 # --- 缓存函数 ---
@@ -25,9 +28,24 @@ def load_excel_data(file):
         return []
 
 
+# --- 颜色处理函数 ---
 def hex_to_rgb(hex_color):
     hex_color = hex_color.lstrip('#')
     return tuple(int(hex_color[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+
+
+def get_lighter_color(rgb, factor):
+    """
+    生成浅色变体。
+    factor 代表“混合白色的比例” (Whiteness)。
+    factor=0.0: 原色 (0% 白)
+    factor=1.0: 纯白 (100% 白)
+    """
+    r, g, b = rgb
+    new_r = r + (1 - r) * factor
+    new_g = g + (1 - g) * factor
+    new_b = b + (1 - b) * factor
+    return (new_r, new_g, new_b)
 
 
 # --- 初始化 Session State ---
@@ -36,19 +54,15 @@ if 'word_libraries' not in st.session_state:
 
 # --- 侧边栏 UI ---
 with st.sidebar:
-    st.title("📚 智能设置")
+    st.title("🌟 效果设置")
 
     st.subheader("1. 文件")
     uploaded_pdf = st.file_uploader("上传 PDF", type=["pdf"], label_visibility="collapsed")
 
     st.divider()
 
-    st.subheader("2. 词库 (Excel)")
-    uploaded_excels = st.file_uploader(
-        "上传词库（单词放在Excel表格第一列） (.xlsx)",
-        type=['xlsx'],
-        accept_multiple_files=True
-    )
+    st.subheader("2. 词库（Excel）")
+    uploaded_excels = st.file_uploader("上传词库（单词放在表格第一列） (.xlsx)", type=['xlsx'], accept_multiple_files=True)
 
     if uploaded_excels:
         for excel_file in uploaded_excels:
@@ -57,7 +71,7 @@ with st.sidebar:
                 if words:
                     st.session_state['word_libraries'][excel_file.name] = {
                         'words': words,
-                        'default_color': '#FFFF00'
+                        'default_color': '#FF0000'  # 默认红色
                     }
                     st.toast(f"✅ 已缓存: {excel_file.name} (共 {len(words)} 词)")
 
@@ -75,11 +89,18 @@ with st.sidebar:
 
     st.divider()
 
-    st.subheader("3. 匹配与颜色")
+    st.subheader("3. 匹配与视觉")
+    use_stemming = st.checkbox("启用智能词形匹配 (Stemming)", value=True)
 
-    # 新增：模糊匹配开关
-    use_stemming = st.checkbox("启用智能词形匹配 (Stemming)", value=True,
-                               help="勾选后，'run' 可以匹配 'running', 'ran', 'runner' 等")
+    # 【修改点 1】滑块逻辑翻转：标题改为透明度，逻辑改为 1.0 为原色
+    repeat_opacity = st.slider(
+        "重复单词高亮透明度 (1.0=原色, 0.0=透明)",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.4,  # 默认 0.4 透明度 (相当于之前的 0.6 淡化)
+        step=0.01,
+        help="控制重复出现的单词高亮颜色深浅。1.00 表示保持最深的原色，0.00 表示完全透明（白色）。"
+    )
 
     final_configs = {}
 
@@ -103,18 +124,21 @@ with st.sidebar:
                 }
 
     st.divider()
-    process_btn = st.button("🚀 开始智能处理", type="primary", use_container_width=True)
+    process_btn = st.button("🚀 生成高亮文件", type="primary", use_container_width=True)
     if st.button("🗑️ 清除缓存"):
         st.session_state['word_libraries'] = {}
         st.cache_data.clear()
         st.rerun()
 
 # --- 主界面 ---
-st.title("📚 PDF 智能词库匹配高亮工具")
+st.title("📚 PDF 智能词库高亮工具")
+
 if use_stemming:
     st.success("✨ 智能模式已开启：将自动忽略单词的时态、复数和变形。")
 else:
     st.info("🔒 精确模式：仅匹配完全一致的单词。")
+
+st.markdown("Tip：**首次**出现的单词使用**深色**，**重复**出现的单词自动按**透明度**变浅。")
 
 if process_btn and uploaded_pdf and final_configs:
 
@@ -130,18 +154,18 @@ if process_btn and uploaded_pdf and final_configs:
         total_pages = len(doc)
         total_stats = {name: 0 for name in final_configs}
 
-        status_text.text("🔍 正在构建词根索引...")
+        status_text.text("🔍 正在初始化...")
 
-        # --- 预处理：构建匹配字典 ---
+        # --- 预处理配置 ---
         processed_configs = {}
+
+        # 【修改点 2】计算混白比例 (Whiteness Factor)
+        # 透明度 1.0 -> 混白 0.0 (原色)
+        # 透明度 0.0 -> 混白 1.0 (纯白)
+        whiteness_factor = 1.0 - repeat_opacity
+
         for name, config in final_configs.items():
             words_list = config['words']
-
-            # 我们需要存储两个集合：
-            # 1. singles_stems: 单个单词的词根集合 (用于智能匹配)
-            # 2. singles_exact: 单个单词的原词集合 (用于精确匹配)
-            # 3. phrases: 短语 (短语很难做词根匹配，通常保持原样搜索)
-
             singles_stems = set()
             singles_exact = set()
             phrases = []
@@ -149,21 +173,29 @@ if process_btn and uploaded_pdf and final_configs:
             for w in words_list:
                 clean_w = w.strip()
                 if " " in clean_w:
-                    phrases.append(clean_w)  # 短语走传统搜索
+                    phrases.append(clean_w)
                 else:
                     lower_w = clean_w.lower()
                     singles_exact.add(lower_w)
                     if use_stemming:
-                        # 计算词根，例如 'computing' -> 'comput'
                         stem_w = stemmer.stem(lower_w)
                         singles_stems.add(stem_w)
+
+            # 计算浅色 (Tint)
+            base_rgb = config['rgb']
+            # 使用翻转后的逻辑生成浅色
+            light_rgb = get_lighter_color(base_rgb, factor=whiteness_factor)
 
             processed_configs[name] = {
                 'singles_stems': singles_stems,
                 'singles_exact': singles_exact,
                 'phrases': phrases,
-                'color': config['rgb']
+                'base_color': base_rgb,  # 深色
+                'light_color': light_rgb  # 浅色
             }
+
+        # --- 全局去重记录器 ---
+        global_seen_items = {name: set() for name in final_configs}
 
         # --- 核心循环 ---
         for i, page in enumerate(doc):
@@ -171,55 +203,67 @@ if process_btn and uploaded_pdf and final_configs:
                 progress_bar.progress((i + 1) / total_pages)
                 status_text.text(f"正在分析第 {i + 1} / {total_pages} 页...")
 
-            # 1. 处理单个单词 (智能/精确逻辑)
-            page_words = page.get_text("words")  # 获取页面所有单词信息
+            # 1. 处理单个单词
+            page_words = page.get_text("words")
 
             for w_info in page_words:
-                current_text = w_info[4].lower()  # PDF中的单词
+                current_text = w_info[4].lower()
                 current_rect = fitz.Rect(w_info[0], w_info[1], w_info[2], w_info[3])
-
-                # 如果开启了智能匹配，我们计算当前单词的词根
                 current_stem = stemmer.stem(current_text) if use_stemming else None
 
                 for lib_name, p_cfg in processed_configs.items():
                     matched = False
+                    match_key = None
 
                     if use_stemming:
-                        # 智能模式：比较词根
                         if current_stem in p_cfg['singles_stems']:
                             matched = True
+                            match_key = current_stem
                     else:
-                        # 精确模式：比较原词
                         if current_text in p_cfg['singles_exact']:
                             matched = True
+                            match_key = current_text
 
                     if matched:
+                        if match_key not in global_seen_items[lib_name]:
+                            use_color = p_cfg['base_color']
+                            global_seen_items[lib_name].add(match_key)
+                        else:
+                            use_color = p_cfg['light_color']
+
                         annot = page.add_highlight_annot(current_rect)
-                        annot.set_colors(stroke=p_cfg['color'])
+                        annot.set_colors(stroke=use_color)
                         annot.update()
                         total_stats[lib_name] += 1
 
-            # 2. 处理短语 (依然使用 search_for，短语通常不需要词形变化)
+            # 2. 处理短语
             for lib_name, p_cfg in processed_configs.items():
                 for phrase in p_cfg['phrases']:
-                    quads = page.search_for(phrase, quads=True)
-                    if quads:
-                        for quad in quads:
+                    quads_list = page.search_for(phrase, quads=True)
+                    if quads_list:
+                        for quad in quads_list:
+                            match_key = phrase.lower()
+
+                            if match_key not in global_seen_items[lib_name]:
+                                use_color = p_cfg['base_color']
+                                global_seen_items[lib_name].add(match_key)
+                            else:
+                                use_color = p_cfg['light_color']
+
                             annot = page.add_highlight_annot(quad)
-                            annot.set_colors(stroke=p_cfg['color'])
+                            annot.set_colors(stroke=use_color)
                             annot.update()
                             total_stats[lib_name] += 1
 
-        # 保存
-        status_text.text("💾 正在保存...")
-        output_path = tmp_input_path.replace(".pdf", "_highlighted.pdf")
+        # 保存与结束
+        status_text.text("💾 正在渲染最终文件...")
+        output_path = tmp_input_path.replace(".pdf", "_first_highlight.pdf")
         doc.save(output_path, garbage=4, deflate=True)
         doc.close()
 
         progress_bar.progress(100)
         status_text.text("✅ 完成！")
 
-        # 统计
         cols = st.columns(len(total_stats))
         for idx, (name, count) in enumerate(total_stats.items()):
             cols[idx].metric(label=name, value=count)
@@ -228,7 +272,7 @@ if process_btn and uploaded_pdf and final_configs:
             st.download_button(
                 "📥 下载结果 PDF",
                 data=file,
-                file_name=f"SmartMatch_{uploaded_pdf.name}",
+                file_name=f"Highlight_{uploaded_pdf.name}",
                 mime="application/pdf",
                 type="primary"
             )
