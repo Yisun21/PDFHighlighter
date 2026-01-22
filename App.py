@@ -35,7 +35,7 @@ if 'processed_pdf_data' not in st.session_state:
 if 'processed_file_name' not in st.session_state:
     st.session_state['processed_file_name'] = ""
 
-# 【新增】页码控制的状态变量初始化
+# 页码控制的状态变量初始化
 if 'p_start' not in st.session_state: st.session_state['p_start'] = 1
 if 'p_end' not in st.session_state: st.session_state['p_end'] = 1
 if 'p_all' not in st.session_state: st.session_state['p_all'] = True
@@ -83,9 +83,10 @@ with st.sidebar:
 
     st.divider()
 
-    st.subheader("2. 词库（Excel）")
-    uploaded_excels = st.file_uploader("上传词库（单词放在表格第一列）", type=['xlsx'], accept_multiple_files=True)
+    st.subheader("2. 词库管理")
 
+    # 2.1 Excel 上传
+    uploaded_excels = st.file_uploader("📂 上传 Excel 词库（单词放在表格第一列）", type=['xlsx'], accept_multiple_files=True)
     if uploaded_excels:
         for excel_file in uploaded_excels:
             if excel_file.name not in st.session_state['word_libraries']:
@@ -97,17 +98,80 @@ with st.sidebar:
                     }
                     st.toast(f"✅ 已缓存: {excel_file.name} (共 {len(words)} 词)")
 
-    with st.expander("➕ 手动添加"):
-        manual_name = st.text_input("词库名")
-        manual_text = st.text_area("单词列表")
-        if st.button("添加"):
-            if manual_name and manual_text:
-                words = [w.strip() for w in manual_text.replace('\n', ',').split(',') if w.strip()]
-                st.session_state['word_libraries'][manual_name] = {
-                    'words': words,
-                    'default_color': '#FFFF00'
-                }
-                st.rerun()
+    # 2.2 【核心修改】手动词库管理器 (新建/编辑/查看)
+    with st.expander("✍️ 手动添加/编辑词库", expanded=True):
+        # 获取当前所有词库列表
+        current_lib_names = list(st.session_state['word_libraries'].keys())
+        # 下拉菜单：选择模式（新建 或 编辑现有）
+        edit_mode_selection = st.selectbox(
+            "选择操作",
+            ["➕ 新建词库"] + current_lib_names,
+            help="选择“新建”来创建新词库，或选择下方已有的词库名进行查看和修改。"
+        )
+
+        # 初始化编辑器变量
+        target_lib_name = ""
+        target_words_str = ""
+        target_color = "#FFFF00"
+        is_editing_existing = False
+
+        if edit_mode_selection == "➕ 新建词库":
+            target_lib_name = st.text_input("设置词库名称", placeholder="例如: 重点动词")
+        else:
+            is_editing_existing = True
+            target_lib_name = edit_mode_selection  # 锁定名称
+            st.info(f"正在编辑: **{target_lib_name}**")
+
+            # 从 Session State 获取现有数据
+            existing_data = st.session_state['word_libraries'][target_lib_name]
+            # 将列表转回字符串显示
+            target_words_str = ", ".join(existing_data['words'])
+            target_color = existing_data.get('default_color', '#FFFF00')
+
+        # 单词输入说明
+        st.caption("📝 **单词输入格式说明**：")
+        st.caption("请在下方文本框输入单词。支持**多行输入**或用**英文逗号**分隔。")
+        st.caption("示例：\n`apple, banana` \n或\n`apple`\n`banana`")
+
+        # 单词编辑区
+        words_input = st.text_area(
+            "单词列表内容",
+            value=target_words_str,
+            height=150,
+            help="在这里编辑你的单词列表"
+        )
+
+        # 颜色选择
+        color_input = st.color_picker("设置高亮颜色", value=target_color)
+
+        # 按钮区域
+        col_save, col_del = st.columns([1, 1])
+
+        with col_save:
+            if st.button("💾 保存/更新", type="primary"):
+                if target_lib_name and words_input:
+                    # 处理单词数据：支持换行和逗号混用
+                    raw_words = words_input.replace('\n', ',').split(',')
+                    # 去除空白和空项并去重
+                    clean_words = sorted(list(set([w.strip() for w in raw_words if w.strip()])))
+
+                    if clean_words:
+                        st.session_state['word_libraries'][target_lib_name] = {
+                            'words': clean_words,
+                            'default_color': color_input
+                        }
+                        st.success(f"已保存! 共 {len(clean_words)} 词")
+                        st.rerun()  # 刷新页面以更新选择列表
+                    else:
+                        st.warning("词库不能为空")
+                else:
+                    st.error("名称和内容不能为空")
+
+        with col_del:
+            if is_editing_existing:
+                if st.button("🗑️ 删除此库"):
+                    del st.session_state['word_libraries'][target_lib_name]
+                    st.rerun()
 
     st.divider()
 
@@ -190,6 +254,7 @@ with st.sidebar:
                     count = len(st.session_state['word_libraries'][name]['words'])
                     st.caption(f"**{name}** ({count} 词)")
                 with col2:
+                    # 这里的颜色选择器会显示该词库当前的颜色（可能是手动编辑时保存的）
                     c = st.color_picker(f"C-{name}", st.session_state['word_libraries'][name]['default_color'],
                                         key=f"c_{name}")
 
@@ -203,7 +268,6 @@ with st.sidebar:
     if st.button("🗑️ 清除缓存"):
         st.session_state['word_libraries'] = {}
         st.session_state['processed_pdf_data'] = None
-        # 清除状态
         st.session_state['p_start'] = 1
         st.session_state['p_end'] = 1
         st.session_state['p_all'] = True
@@ -458,15 +522,14 @@ if process_btn and uploaded_pdf and final_configs:
             st.session_state['processed_pdf_data'] = file.read()
             st.session_state['processed_file_name'] = f"Highlight_{uploaded_pdf.name}"
 
-        # 【新增】每次生成新文件时，重置页码选择器的状态
-        # 获取新文件的总页数（为了安全，暂时读取一遍）
+        # 重置页码状态
         temp_doc = fitz.open(stream=st.session_state['processed_pdf_data'], filetype="pdf")
         new_total_pages = len(temp_doc)
         temp_doc.close()
 
         st.session_state['p_start'] = 1
         st.session_state['p_end'] = new_total_pages
-        st.session_state['p_all'] = True  # 默认全选
+        st.session_state['p_all'] = True
 
         progress_bar.progress(100)
         status_text.text("✅ 完成！")
@@ -486,51 +549,36 @@ if st.session_state['processed_pdf_data'] is not None:
     st.divider()
     st.subheader("📂 结果区域")
 
-    # 1. 准备数据
     doc_result = fitz.open(stream=st.session_state['processed_pdf_data'], filetype="pdf")
     total_result_pages = len(doc_result)
 
 
-    # --- 回调函数逻辑 ---
-    # 当勾选“全部预览”时：将页码设为首尾
+    # 回调函数
     def on_toggle_all():
         if st.session_state['p_all']:
             st.session_state['p_start'] = 1
             st.session_state['p_end'] = total_result_pages
 
 
-    # 当手动修改页码时：取消“全部预览”勾选
-    # (同时我们也可以做一个检查：如果用户手动改回了1和Max，是否自动勾选？
-    #  用户要求：“更改起始页和结束页页数的时候，全部预览选项自动取消勾选”)
     def on_page_change():
-        # 如果手动改的范围正好是全选，则保持或设为True？
-        # 按照“更改...自动取消”的字面意思，只要触碰了输入框回调，
-        # 且当前范围不等于全范围(或者严格执行"修改即取消")。
-        # 为了体验更好，如果手动设回了1-Max，我们可以让它变回True，
-        # 但如果严格按需求，只要动了数字且不等于全范围，就False。
-        # 这里使用严格逻辑：只要动了，先检查是否等于全范围。
         if st.session_state['p_start'] == 1 and st.session_state['p_end'] == total_result_pages:
             st.session_state['p_all'] = True
         else:
             st.session_state['p_all'] = False
 
 
-    # 2. 页面范围选择 UI
     st.caption("选择预览和下载的页面范围：")
     col_p1, col_p2, col_opt = st.columns([1, 1, 2])
 
     with col_opt:
-        st.write("")  # 对齐占位
-        # 【修改点】复选框绑定 session state 和 回调
+        st.write("")
         st.checkbox("🔄 全部预览 (默认所有页)", key='p_all', on_change=on_toggle_all)
 
-        # 【修改点】仅当不全选时，才显示“仅下载预览页数”
         only_dl_preview = False
         if not st.session_state['p_all']:
             only_dl_preview = st.checkbox("⬇️ 仅下载上方选中的预览页数", value=False)
 
     with col_p1:
-        # 【修改点】输入框绑定 session state 和 回调，移除 disabled
         st.number_input(
             "起始页",
             min_value=1,
@@ -551,22 +599,19 @@ if st.session_state['processed_pdf_data'] is not None:
 
     st.divider()
 
-    # 3. 动态切片逻辑
+    # 动态切片逻辑
     target_pdf_data = st.session_state['processed_pdf_data']
     start_page_val = st.session_state['p_start']
     end_page_val = st.session_state['p_end']
 
     if start_page_val != 1 or end_page_val != total_result_pages:
         doc_slice = fitz.open()
-        # insert_pdf 使用 0-based 索引
         doc_slice.insert_pdf(doc_result, from_page=start_page_val - 1, to_page=end_page_val - 1)
         target_pdf_data = doc_slice.tobytes()
         doc_slice.close()
 
     doc_result.close()
 
-    # 4. 确定下载用的数据和文件名
-    # 逻辑：如果只下载预览部分（且没全选），则用切片数据；否则用原数据
     if only_dl_preview and not st.session_state['p_all']:
         download_data = target_pdf_data
         download_name = "Highlight_preview_" + uploaded_pdf.name
@@ -574,7 +619,6 @@ if st.session_state['processed_pdf_data'] is not None:
         download_data = st.session_state['processed_pdf_data']
         download_name = st.session_state['processed_file_name']
 
-    # 5. 显示下载和预览
     col_dl, col_preview = st.columns([1, 4])
 
     with col_dl:
@@ -587,7 +631,6 @@ if st.session_state['processed_pdf_data'] is not None:
         )
 
     with col_preview:
-        # 默认不勾选预览
         if st.checkbox("👀 在线预览结果 PDF (展开/收起)", value=False):
             try:
                 pdf_viewer(input=target_pdf_data, width=800)
