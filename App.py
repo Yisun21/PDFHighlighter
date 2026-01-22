@@ -69,7 +69,7 @@ with st.sidebar:
     st.divider()
 
     st.subheader("2. 词库（Excel）")
-    uploaded_excels = st.file_uploader("上传词库", type=['xlsx'], accept_multiple_files=True)
+    uploaded_excels = st.file_uploader("上传词库（单词放在表格第一列）", type=['xlsx'], accept_multiple_files=True)
 
     if uploaded_excels:
         for excel_file in uploaded_excels:
@@ -99,12 +99,13 @@ with st.sidebar:
     st.subheader("3. 匹配与视觉")
     use_stemming = st.checkbox("启用智能词形匹配 (Stemming)", value=True)
 
-    # --- 【修改点 1】索引页高级设置 ---
+    # --- 索引页高级设置 ---
     generate_index = st.checkbox("生成文末单词索引 (Index Page)", value=True)
 
     # 只有勾选了才显示详细设置
     idx_col_count = 4
     idx_font_size = 10
+    index_target_libs = []  # 初始化
 
     if generate_index:
         col1, col2 = st.columns(2)
@@ -112,6 +113,17 @@ with st.sidebar:
             idx_col_count = st.selectbox("排版列数", [1, 2, 3, 4], index=3)  # 默认4列
         with col2:
             idx_font_size = st.number_input("索引字号", min_value=8, max_value=16, value=10, step=1)
+
+        # 【修改点 1】新增：选择要包含在索引中的具体词库
+        available_libs = list(st.session_state['word_libraries'].keys())
+        st.caption("选择要包含在索引页中的词库：")
+        index_target_libs = st.multiselect(
+            "索引词库选择",
+            options=available_libs,
+            default=available_libs,
+            label_visibility="collapsed",
+            help="未被选中的词库将只会被高亮，而不会出现在文末的单词列表里。"
+        )
 
     st.write("重复单词高亮透明度 (1.0=原色, 0.0=透明)")
 
@@ -149,7 +161,7 @@ with st.sidebar:
 
     if st.session_state['word_libraries']:
         all_libs = list(st.session_state['word_libraries'].keys())
-        selected = st.multiselect("选择词库", all_libs, default=all_libs)
+        selected = st.multiselect("选择高亮词库", all_libs, default=all_libs)
 
         if selected:
             for name in selected:
@@ -181,7 +193,8 @@ if use_stemming:
 else:
     st.info("🔒 精确模式：仅匹配完全一致的单词。")
 
-st.markdown("Tip：**首次**出现的单词使用**深色**，**重复**出现的单词自动按**透明度**变浅；选择生成文末单词索引，将在文末附上高亮单词列表（字母顺序）。")
+st.markdown(
+    "Tip：**首次**出现的单词使用**深色**，**重复**出现的单词自动按**透明度**变浅；选择生成文末单词索引，将在文末附上高亮单词列表（字母顺序）。")
 
 if process_btn and uploaded_pdf and final_configs:
 
@@ -312,9 +325,15 @@ if process_btn and uploaded_pdf and final_configs:
                             annot.update()
                             total_stats[lib_name] += 1
 
-        # --- 【修改点 2】动态索引排版逻辑 ---
+        # --- 动态索引排版逻辑 ---
         if generate_index:
-            has_any_words = any(len(words) > 0 for words in index_data_by_lib.values())
+            # 【修改点 2】过滤数据：只保留用户勾选要索引的词库
+            final_index_data = {
+                k: v for k, v in index_data_by_lib.items()
+                if k in index_target_libs
+            }
+
+            has_any_words = any(len(words) > 0 for words in final_index_data.values())
 
             if has_any_words:
                 status_text.text(f"📄 正在排版索引页 ({idx_col_count}栏)...")
@@ -324,8 +343,6 @@ if process_btn and uploaded_pdf and final_configs:
                 page_height = idx_page.rect.height
 
                 # --- 动态计算排版参数 ---
-                # 使用用户选择的变量: idx_col_count, idx_font_size
-
                 margin_x = 40
                 margin_y = 50
                 col_gap = 15
@@ -340,18 +357,18 @@ if process_btn and uploaded_pdf and final_configs:
                 title_font_size = idx_font_size + 8  # 总标题比内容大一些
                 lib_title_font_size = idx_font_size + 2  # 词库标题比内容大一点
 
-                # 动态计算单词截断长度 (估算值：列宽 / 平均字符宽度)
-                # 平均字符宽度大约是 font_size * 0.5 到 0.6
+                # 动态计算单词截断长度
                 avg_char_width = idx_font_size * 0.55
-                truncation_limit = int(col_width / avg_char_width) - 2  # -2 是留给省略号的位置
-                if truncation_limit < 5: truncation_limit = 5  # 最小保护
+                truncation_limit = int(col_width / avg_char_width) - 2
+                if truncation_limit < 5: truncation_limit = 5
 
                 current_col = 0
                 current_y = margin_y
 
                 idx_page.insert_text((margin_x, 30), "Index of Words", fontsize=title_font_size, color=(0, 0, 0))
 
-                for lib_name, words_set in index_data_by_lib.items():
+                # 遍历过滤后的数据
+                for lib_name, words_set in final_index_data.items():
                     if not words_set:
                         continue
 
