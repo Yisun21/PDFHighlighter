@@ -35,10 +35,6 @@ def hex_to_rgb(hex_color):
 
 
 def get_lighter_color(rgb, factor):
-    """
-    生成浅色变体。
-    factor 代表“混合白色的比例” (Whiteness)。
-    """
     r, g, b = rgb
     new_r = r + (1 - r) * factor
     new_g = g + (1 - g) * factor
@@ -103,8 +99,8 @@ with st.sidebar:
     st.subheader("3. 匹配与视觉")
     use_stemming = st.checkbox("启用智能词形匹配 (Stemming)", value=True)
 
-    # 【新增】索引页选项
-    generate_index = st.checkbox("在文末附上匹配单词索引 (Index Page)", value=True)
+    # 索引页选项
+    generate_index = st.checkbox("在文末附上索引页 (3栏排版)", value=True)
 
     st.write("重复单词高亮透明度 (1.0=原色, 0.0=透明)")
 
@@ -202,8 +198,7 @@ if process_btn and uploaded_pdf and final_configs:
             singles_exact = set()
             phrases = []
 
-            # 【新增】反向映射字典：Stem/Lower -> 原始单词 (用于索引页打印)
-            # 作用：当我们匹配到 'computing' (stem: comput) 时，我们知道它来自词库里的 'Computing'
+            # 反向映射字典
             stem_to_origin_map = {}
             exact_to_origin_map = {}
 
@@ -214,12 +209,11 @@ if process_btn and uploaded_pdf and final_configs:
                 else:
                     lower_w = clean_w.lower()
                     singles_exact.add(lower_w)
-                    exact_to_origin_map[lower_w] = clean_w  # 记录原词
+                    exact_to_origin_map[lower_w] = clean_w
 
                     if use_stemming:
                         stem_w = stemmer.stem(lower_w)
                         singles_stems.add(stem_w)
-                        # 记录 stem 对应的原词 (如果多个词对应同一个stem，记录最后一个即可，索引只需展示一个代表)
                         stem_to_origin_map[stem_w] = clean_w
 
             base_rgb = config['rgb']
@@ -231,15 +225,15 @@ if process_btn and uploaded_pdf and final_configs:
                 'phrases': phrases,
                 'base_color': base_rgb,
                 'light_color': light_rgb,
-                # 保存映射关系
                 'stem_map': stem_to_origin_map,
                 'exact_map': exact_to_origin_map
             }
 
         # --- 追踪记录器 ---
         global_seen_items = {name: set() for name in final_configs}
-        # 【新增】用于收集最终要打印在索引页的单词
-        index_found_words = set()
+
+        # 【修改】使用字典按词库分类收集： {'词库A': set(), '词库B': set()}
+        index_data_by_lib = {name: set() for name in final_configs}
 
         # --- 核心循环 ---
         for i, page in enumerate(doc):
@@ -264,7 +258,6 @@ if process_btn and uploaded_pdf and final_configs:
                         if current_stem in p_cfg['singles_stems']:
                             matched = True
                             match_key = current_stem
-                            # 找回原词
                             origin_word = p_cfg['stem_map'].get(current_stem)
                     else:
                         if current_text in p_cfg['singles_exact']:
@@ -279,9 +272,9 @@ if process_btn and uploaded_pdf and final_configs:
                         else:
                             use_color = p_cfg['light_color']
 
-                        # 【新增】添加到索引列表
+                        # 【修改】按词库归类收集
                         if origin_word:
-                            index_found_words.add(origin_word)
+                            index_data_by_lib[lib_name].add(origin_word)
 
                         annot = page.add_highlight_annot(current_rect)
                         annot.set_colors(stroke=use_color)
@@ -302,44 +295,88 @@ if process_btn and uploaded_pdf and final_configs:
                             else:
                                 use_color = p_cfg['light_color']
 
-                            # 短语直接使用原词库里的 phrase
-                            index_found_words.add(phrase)
+                            # 短语直接收集
+                            index_data_by_lib[lib_name].add(phrase)
 
                             annot = page.add_highlight_annot(quad)
                             annot.set_colors(stroke=use_color)
                             annot.update()
                             total_stats[lib_name] += 1
 
-        # --- 【新增】生成索引页逻辑 ---
-        if generate_index and index_found_words:
-            status_text.text("📄 正在生成索引页...")
+        # --- 【修改】生成3栏分类索引页逻辑 ---
+        if generate_index:
+            has_any_words = any(len(words) > 0 for words in index_data_by_lib.values())
 
-            # 1. 排序
-            sorted_words = sorted(list(index_found_words), key=str.lower)
+            if has_any_words:
+                status_text.text("📄 正在排版索引页 (3栏模式)...")
 
-            # 2. 创建新页面
-            idx_page = doc.new_page()
+                # 创建新页面
+                idx_page = doc.new_page()
+                page_width = idx_page.rect.width
+                page_height = idx_page.rect.height
 
-            # 3. 设置字体和布局
-            page_width = idx_page.rect.width
-            page_height = idx_page.rect.height
-            margin = 50
-            line_height = 20
-            current_y = margin
+                # 排版参数
+                margin_x = 40
+                margin_y = 50
+                col_gap = 20
+                col_count = 3
+                # 计算每一列的宽度
+                col_width = (page_width - 2 * margin_x - (col_count - 1) * col_gap) / col_count
 
-            # 标题
-            idx_page.insert_text((margin, current_y), "Index of Matched Words", fontsize=20, color=(0, 0, 0))
-            current_y += 40
+                current_col = 0  # 当前在第几列 (0, 1, 2)
+                current_y = margin_y
+                line_height = 14  # 行高
+                header_height = 20  # 标题行高
 
-            # 遍历写入单词
-            for word in sorted_words:
-                # 检查是否到底部，如果到底部则新建一页
-                if current_y > page_height - margin:
-                    idx_page = doc.new_page()
-                    current_y = margin
+                # 绘制总标题
+                idx_page.insert_text((margin_x, 30), "Index of Found Words", fontsize=16, color=(0, 0, 0))
 
-                idx_page.insert_text((margin, current_y), f"• {word}", fontsize=11, color=(0.2, 0.2, 0.2))
-                current_y += line_height
+                # 遍历每个词库
+                for lib_name, words_set in index_data_by_lib.items():
+                    if not words_set:
+                        continue
+
+                    sorted_words = sorted(list(words_set), key=str.lower)
+                    lib_color = final_configs[lib_name]['base_color']  # 获取该词库的颜色
+
+                    # --- 检查空间：如果当前列剩下的空间不够写标题+至少1个词，就换列 ---
+                    needed_height = header_height + line_height
+                    if current_y + needed_height > page_height - margin_y:
+                        current_col += 1
+                        current_y = margin_y
+                        if current_col >= col_count:  # 换页
+                            idx_page = doc.new_page()
+                            current_col = 0
+
+                    # 计算当前X坐标
+                    current_x = margin_x + current_col * (col_width + col_gap)
+
+                    # 绘制词库标题 (使用词库对应的颜色)
+                    idx_page.insert_text((current_x, current_y), f"■ {lib_name}", fontsize=10, color=lib_color)
+                    current_y += header_height
+
+                    # 绘制单词
+                    for word in sorted_words:
+                        # 检查空间：到底部了吗？
+                        if current_y > page_height - margin_y:
+                            current_col += 1
+                            current_y = margin_y
+                            if current_col >= col_count:  # 换页
+                                idx_page = doc.new_page()
+                                current_col = 0
+
+                            # 换列/换页后，重新计算X
+                            current_x = margin_x + current_col * (col_width + col_gap)
+
+                        # 绘制单词
+                        # 如果单词太长，PyMuPDF insert_text 不会自动换行，这里简单截断显示防止重叠
+                        display_word = word if len(word) < 25 else word[:22] + "..."
+                        idx_page.insert_text((current_x, current_y), f"  {display_word}", fontsize=8,
+                                             color=(0.2, 0.2, 0.2))
+                        current_y += line_height
+
+                    # 每个词库结束后，空一行
+                    current_y += line_height / 2
 
         # 保存与结束
         status_text.text("💾 正在渲染最终文件...")
