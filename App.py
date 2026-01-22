@@ -5,8 +5,13 @@ import tempfile
 import os
 import gc
 import nltk
-import base64
 from nltk.stem import SnowballStemmer
+
+# 【新增】引入专用的 PDF 预览库
+try:
+    from streamlit_pdf_viewer import pdf_viewer
+except ImportError:
+    st.error("请先安装预览库：pip install streamlit-pdf-viewer")
 
 # --- 页面配置 ---
 st.set_page_config(page_title="PDF 智能词库高亮工具", page_icon="📚", layout="wide")
@@ -211,7 +216,6 @@ if process_btn and uploaded_pdf and final_configs:
     progress_bar = st.progress(0)
     status_text = st.empty()
 
-    # 【关键修复】确保 try 代码块被正确缩进，并且后面紧跟 except
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_input:
             tmp_input.write(uploaded_pdf.getvalue())
@@ -451,15 +455,13 @@ if process_btn and uploaded_pdf and final_configs:
         os.unlink(output_path)
         gc.collect()
 
-    # 【关键修复】except 必须紧跟在 try 代码块结束的地方，并且缩进要和 try 对齐
     except Exception as e:
         st.error(f"出错: {e}")
 
-# 这一行 elif 必须和 if process_btn... 对齐
 elif process_btn:
     st.error("请检查配置。")
 
-# --- 结果显示区域 ---
+# --- 结果显示区域 (独立渲染) ---
 if st.session_state['processed_pdf_data'] is not None:
     st.divider()
     st.subheader("📂 结果区域")
@@ -476,15 +478,11 @@ if st.session_state['processed_pdf_data'] is not None:
         )
 
     with col_preview:
+        # 【修改点】使用 streamlit_pdf_viewer 库
+        # 这是目前 Streamlit 社区公认的渲染 PDF 最稳定的方案
         if st.checkbox("👀 在线预览结果 PDF (展开/收起)", value=False):
-            base64_pdf = base64.b64encode(st.session_state['processed_pdf_data']).decode('utf-8')
-            pdf_display = f'''
-                <iframe 
-                    src="data:application/pdf;base64,{base64_pdf}" 
-                    width="100%" 
-                    height="900px" 
-                    type="application/pdf"
-                    style="border: 1px solid #ddd; border-radius: 5px;">
-                </iframe>
-            '''
-            st.markdown(pdf_display, unsafe_allow_html=True)
+            try:
+                # 直接调用 pdf_viewer，传入二进制数据
+                pdf_viewer(input=st.session_state['processed_pdf_data'], width=800)
+            except Exception as e:
+                st.error(f"预览加载失败: {e}")
