@@ -232,7 +232,7 @@ if process_btn and uploaded_pdf and final_configs:
         # --- 追踪记录器 ---
         global_seen_items = {name: set() for name in final_configs}
 
-        # 【修改】使用字典按词库分类收集： {'词库A': set(), '词库B': set()}
+        # 按词库分类收集
         index_data_by_lib = {name: set() for name in final_configs}
 
         # --- 核心循环 ---
@@ -272,7 +272,6 @@ if process_btn and uploaded_pdf and final_configs:
                         else:
                             use_color = p_cfg['light_color']
 
-                        # 【修改】按词库归类收集
                         if origin_word:
                             index_data_by_lib[lib_name].add(origin_word)
 
@@ -295,7 +294,6 @@ if process_btn and uploaded_pdf and final_configs:
                             else:
                                 use_color = p_cfg['light_color']
 
-                            # 短语直接收集
                             index_data_by_lib[lib_name].add(phrase)
 
                             annot = page.add_highlight_annot(quad)
@@ -303,7 +301,7 @@ if process_btn and uploaded_pdf and final_configs:
                             annot.update()
                             total_stats[lib_name] += 1
 
-        # --- 【修改】生成3栏分类索引页逻辑 ---
+        # --- 生成3栏分类索引页逻辑 ---
         if generate_index:
             has_any_words = any(len(words) > 0 for words in index_data_by_lib.values())
 
@@ -320,62 +318,52 @@ if process_btn and uploaded_pdf and final_configs:
                 margin_y = 50
                 col_gap = 20
                 col_count = 3
-                # 计算每一列的宽度
                 col_width = (page_width - 2 * margin_x - (col_count - 1) * col_gap) / col_count
 
-                current_col = 0  # 当前在第几列 (0, 1, 2)
+                current_col = 0
                 current_y = margin_y
-                line_height = 14  # 行高
-                header_height = 20  # 标题行高
+                line_height = 14
+                header_height = 20
 
-                # 绘制总标题
                 idx_page.insert_text((margin_x, 30), "Index of Found Words", fontsize=16, color=(0, 0, 0))
 
-                # 遍历每个词库
                 for lib_name, words_set in index_data_by_lib.items():
                     if not words_set:
                         continue
 
                     sorted_words = sorted(list(words_set), key=str.lower)
-                    lib_color = final_configs[lib_name]['base_color']  # 获取该词库的颜色
 
-                    # --- 检查空间：如果当前列剩下的空间不够写标题+至少1个词，就换列 ---
+                    # --- 【修复点】这里改成了 ['rgb'] ---
+                    lib_color = final_configs[lib_name]['rgb']
+
                     needed_height = header_height + line_height
                     if current_y + needed_height > page_height - margin_y:
                         current_col += 1
                         current_y = margin_y
-                        if current_col >= col_count:  # 换页
+                        if current_col >= col_count:
                             idx_page = doc.new_page()
                             current_col = 0
 
-                    # 计算当前X坐标
                     current_x = margin_x + current_col * (col_width + col_gap)
 
-                    # 绘制词库标题 (使用词库对应的颜色)
                     idx_page.insert_text((current_x, current_y), f"■ {lib_name}", fontsize=10, color=lib_color)
                     current_y += header_height
 
-                    # 绘制单词
                     for word in sorted_words:
-                        # 检查空间：到底部了吗？
                         if current_y > page_height - margin_y:
                             current_col += 1
                             current_y = margin_y
-                            if current_col >= col_count:  # 换页
+                            if current_col >= col_count:
                                 idx_page = doc.new_page()
                                 current_col = 0
 
-                            # 换列/换页后，重新计算X
                             current_x = margin_x + current_col * (col_width + col_gap)
 
-                        # 绘制单词
-                        # 如果单词太长，PyMuPDF insert_text 不会自动换行，这里简单截断显示防止重叠
                         display_word = word if len(word) < 25 else word[:22] + "..."
                         idx_page.insert_text((current_x, current_y), f"  {display_word}", fontsize=8,
                                              color=(0.2, 0.2, 0.2))
                         current_y += line_height
 
-                    # 每个词库结束后，空一行
                     current_y += line_height / 2
 
         # 保存与结束
