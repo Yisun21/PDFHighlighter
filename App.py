@@ -38,8 +38,6 @@ def get_lighter_color(rgb, factor):
     """
     生成浅色变体。
     factor 代表“混合白色的比例” (Whiteness)。
-    factor=0.0: 原色 (0% 白)
-    factor=1.0: 纯白 (100% 白)
     """
     r, g, b = rgb
     new_r = r + (1 - r) * factor
@@ -52,16 +50,18 @@ def get_lighter_color(rgb, factor):
 if 'word_libraries' not in st.session_state:
     st.session_state['word_libraries'] = {}
 
-# 【新增】初始化透明度状态，默认 0.20
 if 'opacity_value' not in st.session_state:
     st.session_state['opacity_value'] = 0.20
 
-# 【新增】回调函数：用于同步滑块和输入框
+
+# --- 回调函数 ---
 def update_opacity_from_slider():
     st.session_state['opacity_value'] = st.session_state['slider_widget']
 
+
 def update_opacity_from_input():
     st.session_state['opacity_value'] = st.session_state['input_widget']
+
 
 # --- 侧边栏 UI ---
 with st.sidebar:
@@ -73,7 +73,7 @@ with st.sidebar:
     st.divider()
 
     st.subheader("2. 词库（Excel）")
-    uploaded_excels = st.file_uploader("上传词库（单词放在表格第一列） (.xlsx)", type=['xlsx'], accept_multiple_files=True)
+    uploaded_excels = st.file_uploader("上传词库", type=['xlsx'], accept_multiple_files=True)
 
     if uploaded_excels:
         for excel_file in uploaded_excels:
@@ -82,7 +82,7 @@ with st.sidebar:
                 if words:
                     st.session_state['word_libraries'][excel_file.name] = {
                         'words': words,
-                        'default_color': '#FFFF00'  # 默认黄色
+                        'default_color': '#FFFF00'
                     }
                     st.toast(f"✅ 已缓存: {excel_file.name} (共 {len(words)} 词)")
 
@@ -103,40 +103,39 @@ with st.sidebar:
     st.subheader("3. 匹配与视觉")
     use_stemming = st.checkbox("启用智能词形匹配 (Stemming)", value=True)
 
+    # 【新增】索引页选项
+    generate_index = st.checkbox("在文末附上匹配单词索引 (Index Page)", value=True)
+
     st.write("重复单词高亮透明度 (1.0=原色, 0.0=透明)")
 
-    # 【新增】使用列布局放置输入框和滑块
-    col_input, col_slider = st.columns([1, 2.5])  # 左窄右宽
+    col_input, col_slider = st.columns([1, 2.5])
 
     with col_input:
-        # 数字输入框
         st.number_input(
             label="数值输入",
             label_visibility="collapsed",
             min_value=0.0,
             max_value=1.0,
             step=0.01,
-            value=st.session_state['opacity_value'],  # 绑定 Session State
+            value=st.session_state['opacity_value'],
             key='input_widget',
-            on_change=update_opacity_from_input,      # 绑定回调
+            on_change=update_opacity_from_input,
             format="%.2f"
         )
 
     with col_slider:
-        # 滑块
         st.slider(
             label="滑块调节",
             label_visibility="collapsed",
             min_value=0.0,
             max_value=1.0,
             step=0.01,
-            value=st.session_state['opacity_value'],  # 绑定 Session State
+            value=st.session_state['opacity_value'],
             key='slider_widget',
-            on_change=update_opacity_from_slider,     # 绑定回调
-            help="控制重复出现的单词高亮颜色深浅。1.00 表示保持最深的原色，0.00 表示完全透明（白色）。"
+            on_change=update_opacity_from_slider,
+            help="1.00 表示保持最深的原色，0.00 表示完全透明（白色）。"
         )
 
-    # 将最终值赋给 logic 变量供后续使用
     repeat_opacity = st.session_state['opacity_value']
 
     final_configs = {}
@@ -195,10 +194,6 @@ if process_btn and uploaded_pdf and final_configs:
 
         # --- 预处理配置 ---
         processed_configs = {}
-
-        # 计算混白比例 (Whiteness Factor)
-        # 透明度 1.0 -> 混白 0.0 (原色)
-        # 透明度 0.0 -> 混白 1.0 (纯白)
         whiteness_factor = 1.0 - repeat_opacity
 
         for name, config in final_configs.items():
@@ -207,6 +202,11 @@ if process_btn and uploaded_pdf and final_configs:
             singles_exact = set()
             phrases = []
 
+            # 【新增】反向映射字典：Stem/Lower -> 原始单词 (用于索引页打印)
+            # 作用：当我们匹配到 'computing' (stem: comput) 时，我们知道它来自词库里的 'Computing'
+            stem_to_origin_map = {}
+            exact_to_origin_map = {}
+
             for w in words_list:
                 clean_w = w.strip()
                 if " " in clean_w:
@@ -214,25 +214,32 @@ if process_btn and uploaded_pdf and final_configs:
                 else:
                     lower_w = clean_w.lower()
                     singles_exact.add(lower_w)
+                    exact_to_origin_map[lower_w] = clean_w  # 记录原词
+
                     if use_stemming:
                         stem_w = stemmer.stem(lower_w)
                         singles_stems.add(stem_w)
+                        # 记录 stem 对应的原词 (如果多个词对应同一个stem，记录最后一个即可，索引只需展示一个代表)
+                        stem_to_origin_map[stem_w] = clean_w
 
-            # 计算浅色 (Tint)
             base_rgb = config['rgb']
-            # 使用翻转后的逻辑生成浅色
             light_rgb = get_lighter_color(base_rgb, factor=whiteness_factor)
 
             processed_configs[name] = {
                 'singles_stems': singles_stems,
                 'singles_exact': singles_exact,
                 'phrases': phrases,
-                'base_color': base_rgb,  # 深色
-                'light_color': light_rgb  # 浅色
+                'base_color': base_rgb,
+                'light_color': light_rgb,
+                # 保存映射关系
+                'stem_map': stem_to_origin_map,
+                'exact_map': exact_to_origin_map
             }
 
-        # --- 全局去重记录器 ---
+        # --- 追踪记录器 ---
         global_seen_items = {name: set() for name in final_configs}
+        # 【新增】用于收集最终要打印在索引页的单词
+        index_found_words = set()
 
         # --- 核心循环 ---
         for i, page in enumerate(doc):
@@ -251,15 +258,19 @@ if process_btn and uploaded_pdf and final_configs:
                 for lib_name, p_cfg in processed_configs.items():
                     matched = False
                     match_key = None
+                    origin_word = None  # 用于索引
 
                     if use_stemming:
                         if current_stem in p_cfg['singles_stems']:
                             matched = True
                             match_key = current_stem
+                            # 找回原词
+                            origin_word = p_cfg['stem_map'].get(current_stem)
                     else:
                         if current_text in p_cfg['singles_exact']:
                             matched = True
                             match_key = current_text
+                            origin_word = p_cfg['exact_map'].get(current_text)
 
                     if matched:
                         if match_key not in global_seen_items[lib_name]:
@@ -267,6 +278,10 @@ if process_btn and uploaded_pdf and final_configs:
                             global_seen_items[lib_name].add(match_key)
                         else:
                             use_color = p_cfg['light_color']
+
+                        # 【新增】添加到索引列表
+                        if origin_word:
+                            index_found_words.add(origin_word)
 
                         annot = page.add_highlight_annot(current_rect)
                         annot.set_colors(stroke=use_color)
@@ -287,14 +302,48 @@ if process_btn and uploaded_pdf and final_configs:
                             else:
                                 use_color = p_cfg['light_color']
 
+                            # 短语直接使用原词库里的 phrase
+                            index_found_words.add(phrase)
+
                             annot = page.add_highlight_annot(quad)
                             annot.set_colors(stroke=use_color)
                             annot.update()
                             total_stats[lib_name] += 1
 
+        # --- 【新增】生成索引页逻辑 ---
+        if generate_index and index_found_words:
+            status_text.text("📄 正在生成索引页...")
+
+            # 1. 排序
+            sorted_words = sorted(list(index_found_words), key=str.lower)
+
+            # 2. 创建新页面
+            idx_page = doc.new_page()
+
+            # 3. 设置字体和布局
+            page_width = idx_page.rect.width
+            page_height = idx_page.rect.height
+            margin = 50
+            line_height = 20
+            current_y = margin
+
+            # 标题
+            idx_page.insert_text((margin, current_y), "Index of Matched Words", fontsize=20, color=(0, 0, 0))
+            current_y += 40
+
+            # 遍历写入单词
+            for word in sorted_words:
+                # 检查是否到底部，如果到底部则新建一页
+                if current_y > page_height - margin:
+                    idx_page = doc.new_page()
+                    current_y = margin
+
+                idx_page.insert_text((margin, current_y), f"• {word}", fontsize=11, color=(0.2, 0.2, 0.2))
+                current_y += line_height
+
         # 保存与结束
         status_text.text("💾 正在渲染最终文件...")
-        output_path = tmp_input_path.replace(".pdf", "_first_highlight.pdf")
+        output_path = tmp_input_path.replace(".pdf", "_highlighted_index.pdf")
         doc.save(output_path, garbage=4, deflate=True)
         doc.close()
 
@@ -309,7 +358,7 @@ if process_btn and uploaded_pdf and final_configs:
             st.download_button(
                 "📥 下载结果 PDF",
                 data=file,
-                file_name=f"Highlight_{uploaded_pdf.name}",
+                file_name=f"Highlight_Index_{uploaded_pdf.name}",
                 mime="application/pdf",
                 type="primary"
             )
