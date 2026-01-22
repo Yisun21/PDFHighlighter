@@ -99,7 +99,7 @@ with st.sidebar:
                     }
                     st.toast(f"✅ 已缓存: {excel_file.name} (共 {len(words)} 词)")
 
-    # 2.2 【修改点 1】默认收起 expander (expanded=False)
+    # 2.2 手动词库管理器 (新建/编辑/查看)
     with st.expander("✍️ 手动添加/编辑词库", expanded=False):
         # 获取当前所有词库列表
         current_lib_names = list(st.session_state['word_libraries'].keys())
@@ -113,7 +113,6 @@ with st.sidebar:
         # 初始化编辑器变量
         target_lib_name = ""
         target_words_str = ""
-        # 移除了 target_color 变量的初始化，因为这里不再编辑颜色
         is_editing_existing = False
 
         if edit_mode_selection == "➕ 新建词库":
@@ -127,7 +126,6 @@ with st.sidebar:
             existing_data = st.session_state['word_libraries'][target_lib_name]
             # 将列表转回字符串显示
             target_words_str = ", ".join(existing_data['words'])
-            # 移除了颜色获取逻辑
 
         # 单词输入说明
         st.caption("📝 **单词输入格式说明**：")
@@ -142,8 +140,6 @@ with st.sidebar:
             help="在这里编辑你的单词列表"
         )
 
-        # 【修改点 2】移除了 color_picker (设置高亮颜色)
-
         # 按钮区域
         col_save, col_del = st.columns([1, 1])
 
@@ -156,8 +152,7 @@ with st.sidebar:
                     clean_words = sorted(list(set([w.strip() for w in raw_words if w.strip()])))
 
                     if clean_words:
-                        # 保持原有的颜色（如果是编辑），如果是新建则默认黄色
-                        # 因为这里不再设置颜色，所以需要小心保留原有颜色属性
+                        # 保持原有的颜色
                         current_color = '#FFFF00'
                         if is_editing_existing:
                             current_color = st.session_state['word_libraries'][target_lib_name].get('default_color',
@@ -165,10 +160,10 @@ with st.sidebar:
 
                         st.session_state['word_libraries'][target_lib_name] = {
                             'words': clean_words,
-                            'default_color': current_color  # 继承或使用默认
+                            'default_color': current_color
                         }
                         st.success(f"已保存! 共 {len(clean_words)} 词")
-                        st.rerun()  # 刷新页面以更新选择列表
+                        st.rerun()
                     else:
                         st.warning("词库不能为空")
                 else:
@@ -217,16 +212,11 @@ with st.sidebar:
 
     repeat_opacity = st.session_state['opacity_value']
 
-    # ---------------------------------------------------------
-    # 【逻辑重组】先选择高亮词库，再配置索引页
-    # ---------------------------------------------------------
-
     final_configs = {}
-    selected_highlight_libs = []  # 存储用户选中的高亮词库名
+    selected_highlight_libs = []
 
     if st.session_state['word_libraries']:
         all_libs = list(st.session_state['word_libraries'].keys())
-        # 这里是“选择高亮词库”
         selected_highlight_libs = st.multiselect("选择高亮词库", all_libs, default=all_libs)
 
         if selected_highlight_libs:
@@ -236,7 +226,6 @@ with st.sidebar:
                     count = len(st.session_state['word_libraries'][name]['words'])
                     st.caption(f"**{name}** ({count} 词)")
                 with col2:
-                    # 颜色设置仅在这里进行
                     c = st.color_picker(f"C-{name}", st.session_state['word_libraries'][name]['default_color'],
                                         key=f"c_{name}")
 
@@ -247,7 +236,7 @@ with st.sidebar:
 
     st.divider()
 
-    # --- 索引页高级设置 (移到高亮选择下方，逻辑关联) ---
+    # --- 索引页高级设置 ---
     generate_index = st.checkbox("生成文末单词索引 (Index Page)", value=True)
 
     idx_col_count = 4
@@ -269,18 +258,23 @@ with st.sidebar:
         with col2:
             idx_font_size = st.number_input("索引字号", min_value=8, max_value=16, value=10, step=1)
 
-        # 【修改点 3】仅显示“已选高亮词库”供索引选择
         if selected_highlight_libs:
             st.caption("选择要包含在索引页中的词库：")
             index_target_libs = st.multiselect(
                 "索引词库选择",
-                options=selected_highlight_libs,  # 数据源来自上方选中的词库
-                default=selected_highlight_libs,  # 默认全选
+                options=selected_highlight_libs,
+                default=selected_highlight_libs,
                 label_visibility="collapsed"
             )
         else:
             st.warning("请先在上方选择至少一个高亮词库")
             index_target_libs = []
+
+    # 【修改点 1】新增：在线预览开关
+    st.divider()
+    st.subheader("4. 预览设置")
+    enable_preview = st.checkbox("👀 生成在线预览（取消可加速）", value=True,
+                                 help="取消勾选可以加快生成速度，生成后只显示下载按钮，不加载预览界面。")
 
     st.divider()
     process_btn = st.button("🚀 生成高亮文件", type="primary", use_container_width=True)
@@ -304,9 +298,8 @@ else:
 st.markdown(
     "Tip：**首次**出现的单词使用**深色**，**重复**出现的单词自动按**透明度**变浅；选择生成文末单词索引，将在文末附上**高亮单词列表**。")
 
-# --- 处理逻辑 (优化后的版本) ---
+# --- 处理逻辑 ---
 if process_btn:
-    # 1. 具体的错误提示
     if not uploaded_pdf:
         st.error("❌ 请先上传 PDF 文件（在侧边栏第 1 步）。")
     elif not st.session_state['word_libraries']:
@@ -314,7 +307,6 @@ if process_btn:
     elif not final_configs:
         st.error("❌ 请至少选择一个需要高亮的词库（在侧边栏第 3 步“选择高亮词库”中勾选）。")
 
-    # 2. 如果配置都齐全，才开始执行
     else:
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -574,90 +566,106 @@ if st.session_state['processed_pdf_data'] is not None:
     st.divider()
     st.subheader("📂 结果区域")
 
-    doc_result = fitz.open(stream=st.session_state['processed_pdf_data'], filetype="pdf")
-    total_result_pages = len(doc_result)
+    # 【修改点 2】 根据是否启用预览决定显示内容
+    if enable_preview:
+        # 如果启用了预览：显示完整的页码选择、切片和预览界面
+
+        doc_result = fitz.open(stream=st.session_state['processed_pdf_data'], filetype="pdf")
+        total_result_pages = len(doc_result)
 
 
-    # 回调函数
-    def on_toggle_all():
-        if st.session_state['p_all']:
-            st.session_state['p_start'] = 1
-            st.session_state['p_end'] = total_result_pages
+        # 回调函数
+        def on_toggle_all():
+            if st.session_state['p_all']:
+                st.session_state['p_start'] = 1
+                st.session_state['p_end'] = total_result_pages
 
 
-    def on_page_change():
-        if st.session_state['p_start'] == 1 and st.session_state['p_end'] == total_result_pages:
-            st.session_state['p_all'] = True
+        def on_page_change():
+            if st.session_state['p_start'] == 1 and st.session_state['p_end'] == total_result_pages:
+                st.session_state['p_all'] = True
+            else:
+                st.session_state['p_all'] = False
+
+
+        st.caption("选择预览和下载的页面范围：")
+        col_p1, col_p2, col_opt = st.columns([1, 1, 2])
+
+        with col_opt:
+            st.write("")
+            st.checkbox("🔄 全部预览 (默认所有页)", key='p_all', on_change=on_toggle_all)
+
+            only_dl_preview = False
+            if not st.session_state['p_all']:
+                only_dl_preview = st.checkbox("⬇️ 仅下载上方选中的预览页数", value=False)
+
+        with col_p1:
+            st.number_input(
+                "起始页",
+                min_value=1,
+                max_value=total_result_pages,
+                step=1,
+                key='p_start',
+                on_change=on_page_change
+            )
+        with col_p2:
+            st.number_input(
+                "结束页",
+                min_value=st.session_state['p_start'],
+                max_value=total_result_pages,
+                step=1,
+                key='p_end',
+                on_change=on_page_change
+            )
+
+        st.divider()
+
+        # 动态切片逻辑
+        target_pdf_data = st.session_state['processed_pdf_data']
+        start_page_val = st.session_state['p_start']
+        end_page_val = st.session_state['p_end']
+
+        if start_page_val != 1 or end_page_val != total_result_pages:
+            doc_slice = fitz.open()
+            doc_slice.insert_pdf(doc_result, from_page=start_page_val - 1, to_page=end_page_val - 1)
+            target_pdf_data = doc_slice.tobytes()
+            doc_slice.close()
+
+        doc_result.close()
+
+        if only_dl_preview and not st.session_state['p_all']:
+            download_data = target_pdf_data
+            download_name = "Highlight_preview_" + uploaded_pdf.name
         else:
-            st.session_state['p_all'] = False
+            download_data = st.session_state['processed_pdf_data']
+            download_name = st.session_state['processed_file_name']
 
+        col_dl, col_preview = st.columns([1, 4])
 
-    st.caption("选择预览和下载的页面范围：")
-    col_p1, col_p2, col_opt = st.columns([1, 1, 2])
+        with col_dl:
+            st.download_button(
+                "📥 下载结果 PDF",
+                data=download_data,
+                file_name=download_name,
+                mime="application/pdf",
+                type="primary"
+            )
 
-    with col_opt:
-        st.write("")
-        st.checkbox("🔄 全部预览 (默认所有页)", key='p_all', on_change=on_toggle_all)
+        with col_preview:
+            if st.checkbox("👀 在线预览结果 PDF (展开/收起)", value=False):
+                try:
+                    pdf_viewer(input=target_pdf_data, width=800)
+                except Exception as e:
+                    st.error(f"预览加载失败: {e}")
 
-        only_dl_preview = False
-        if not st.session_state['p_all']:
-            only_dl_preview = st.checkbox("⬇️ 仅下载上方选中的预览页数", value=False)
-
-    with col_p1:
-        st.number_input(
-            "起始页",
-            min_value=1,
-            max_value=total_result_pages,
-            step=1,
-            key='p_start',
-            on_change=on_page_change
-        )
-    with col_p2:
-        st.number_input(
-            "结束页",
-            min_value=st.session_state['p_start'],
-            max_value=total_result_pages,
-            step=1,
-            key='p_end',
-            on_change=on_page_change
-        )
-
-    st.divider()
-
-    # 动态切片逻辑
-    target_pdf_data = st.session_state['processed_pdf_data']
-    start_page_val = st.session_state['p_start']
-    end_page_val = st.session_state['p_end']
-
-    if start_page_val != 1 or end_page_val != total_result_pages:
-        doc_slice = fitz.open()
-        doc_slice.insert_pdf(doc_result, from_page=start_page_val - 1, to_page=end_page_val - 1)
-        target_pdf_data = doc_slice.tobytes()
-        doc_slice.close()
-
-    doc_result.close()
-
-    if only_dl_preview and not st.session_state['p_all']:
-        download_data = target_pdf_data
-        download_name = "Highlight_preview_" + uploaded_pdf.name
     else:
-        download_data = st.session_state['processed_pdf_data']
-        download_name = st.session_state['processed_file_name']
-
-    col_dl, col_preview = st.columns([1, 4])
-
-    with col_dl:
+        # 【修改点 3】如果未启用预览：只显示下载完整版按钮
+        # 不加载 fitz 计算，不显示预览组件，直接从 session 拿数据
         st.download_button(
             "📥 下载结果 PDF",
-            data=download_data,
-            file_name=download_name,
+            data=st.session_state['processed_pdf_data'],
+            file_name=st.session_state['processed_file_name'],
             mime="application/pdf",
-            type="primary"
+            type="primary",
+            use_container_width=True
         )
-
-    with col_preview:
-        if st.checkbox("👀 在线预览结果 PDF (展开/收起)", value=False):
-            try:
-                pdf_viewer(input=target_pdf_data, width=800)
-            except Exception as e:
-                st.error(f"预览加载失败: {e}")
