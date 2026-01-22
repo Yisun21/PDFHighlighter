@@ -18,12 +18,12 @@ except:
     nltk.download('snowball_data')
     stemmer = SnowballStemmer("english")
 
-# --- Session State 初始化 (关键修改点) ---
+# --- Session State 初始化 ---
 if 'word_libraries' not in st.session_state:
     st.session_state['word_libraries'] = {}
 if 'opacity_value' not in st.session_state:
     st.session_state['opacity_value'] = 0.20
-# 新增：用于存储生成的PDF数据，防止刷新丢失
+# 存储生成结果的状态
 if 'processed_pdf_data' not in st.session_state:
     st.session_state['processed_pdf_data'] = None
 if 'processed_file_name' not in st.session_state:
@@ -189,10 +189,9 @@ with st.sidebar:
 
     st.divider()
     process_btn = st.button("🚀 生成高亮文件", type="primary", use_container_width=True)
-    # 增加清除结果的逻辑
     if st.button("🗑️ 清除缓存"):
         st.session_state['word_libraries'] = {}
-        st.session_state['processed_pdf_data'] = None  # 清除生成结果
+        st.session_state['processed_pdf_data'] = None
         st.cache_data.clear()
         st.rerun()
 
@@ -206,13 +205,13 @@ else:
 
 st.markdown("Tip：**首次**出现的单词使用**深色**，**重复**出现的单词自动按**透明度**变浅。")
 
-# --- 处理逻辑 (逻辑分离) ---
-# 1. 点击按钮生成时，执行处理并保存到 Session State
+# --- 处理逻辑 ---
 if process_btn and uploaded_pdf and final_configs:
 
     progress_bar = st.progress(0)
     status_text = st.empty()
 
+    # 【关键修复】确保 try 代码块被正确缩进，并且后面紧跟 except
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_input:
             tmp_input.write(uploaded_pdf.getvalue())
@@ -439,7 +438,7 @@ if process_btn and uploaded_pdf and final_configs:
         doc.save(output_path, garbage=4, deflate=True)
         doc.close()
 
-        # 【核心修改】将结果存入 Session State，而不是只显示一次
+        # 将结果存入 Session State
         with open(output_path, "rb") as file:
             st.session_state['processed_pdf_data'] = file.read()
             st.session_state['processed_file_name'] = f"Highlight_{uploaded_pdf.name}"
@@ -452,11 +451,15 @@ if process_btn and uploaded_pdf and final_configs:
         os.unlink(output_path)
         gc.collect()
 
+    # 【关键修复】except 必须紧跟在 try 代码块结束的地方，并且缩进要和 try 对齐
+    except Exception as e:
+        st.error(f"出错: {e}")
+
+# 这一行 elif 必须和 if process_btn... 对齐
 elif process_btn:
     st.error("请检查配置。")
 
-# --- 结果显示区域 (独立于 process_btn 按钮状态) ---
-# 只要 Session State 里有数据，就一直显示，不受复选框重绘影响
+# --- 结果显示区域 ---
 if st.session_state['processed_pdf_data'] is not None:
     st.divider()
     st.subheader("📂 结果区域")
@@ -473,15 +476,15 @@ if st.session_state['processed_pdf_data'] is not None:
         )
 
     with col_preview:
-        # 这里使用 embed 标签，通常比 iframe 兼容性更好
         if st.checkbox("👀 在线预览结果 PDF (展开/收起)", value=False):
             base64_pdf = base64.b64encode(st.session_state['processed_pdf_data']).decode('utf-8')
             pdf_display = f'''
-                <embed 
+                <iframe 
                     src="data:application/pdf;base64,{base64_pdf}" 
-                    type="application/pdf" 
                     width="100%" 
                     height="900px" 
-                />
+                    type="application/pdf"
+                    style="border: 1px solid #ddd; border-radius: 5px;">
+                </iframe>
             '''
             st.markdown(pdf_display, unsafe_allow_html=True)
