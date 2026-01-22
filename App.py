@@ -99,8 +99,19 @@ with st.sidebar:
     st.subheader("3. 匹配与视觉")
     use_stemming = st.checkbox("启用智能词形匹配 (Stemming)", value=True)
 
-    # 索引页选项
-    generate_index = st.checkbox("在文末附上索引页 (3栏排版)", value=True)
+    # --- 【修改点 1】索引页高级设置 ---
+    generate_index = st.checkbox("生成文末单词索引 (Index Page)", value=True)
+
+    # 只有勾选了才显示详细设置
+    idx_col_count = 4
+    idx_font_size = 10
+
+    if generate_index:
+        col1, col2 = st.columns(2)
+        with col1:
+            idx_col_count = st.selectbox("排版列数", [1, 2, 3, 4], index=3)  # 默认4列
+        with col2:
+            idx_font_size = st.number_input("索引字号", min_value=8, max_value=16, value=10, step=1)
 
     st.write("重复单词高亮透明度 (1.0=原色, 0.0=透明)")
 
@@ -170,7 +181,8 @@ if use_stemming:
 else:
     st.info("🔒 精确模式：仅匹配完全一致的单词。")
 
-st.markdown("Tip：**首次**出现的单词使用**深色**，**重复**出现的单词自动按**透明度**变浅。")
+st.markdown("Tip：**首次**出现的单词使用**深色**，**重复**出现的单词自动按**透明度**变浅。"
+            "    选择生成文末单词索引，将在文末附上高亮单词列表（字母顺序）")
 
 if process_btn and uploaded_pdf and final_configs:
 
@@ -301,39 +313,50 @@ if process_btn and uploaded_pdf and final_configs:
                             annot.update()
                             total_stats[lib_name] += 1
 
-        # --- 生成3栏分类索引页逻辑 ---
+        # --- 【修改点 2】动态索引排版逻辑 ---
         if generate_index:
             has_any_words = any(len(words) > 0 for words in index_data_by_lib.values())
 
             if has_any_words:
-                status_text.text("📄 正在排版索引页 (3栏模式)...")
+                status_text.text(f"📄 正在排版索引页 ({idx_col_count}栏)...")
 
-                # 创建新页面
                 idx_page = doc.new_page()
                 page_width = idx_page.rect.width
                 page_height = idx_page.rect.height
 
-                # 排版参数
+                # --- 动态计算排版参数 ---
+                # 使用用户选择的变量: idx_col_count, idx_font_size
+
                 margin_x = 40
                 margin_y = 50
-                col_gap = 20
-                col_count = 3
+                col_gap = 15
+                col_count = idx_col_count
+
+                # 根据列数计算列宽
                 col_width = (page_width - 2 * margin_x - (col_count - 1) * col_gap) / col_count
+
+                # 根据字号计算行高和标题高
+                line_height = idx_font_size * 1.5  # 行高通常是字号的 1.5 倍
+                header_height = idx_font_size * 2.0
+                title_font_size = idx_font_size + 8  # 总标题比内容大一些
+                lib_title_font_size = idx_font_size + 2  # 词库标题比内容大一点
+
+                # 动态计算单词截断长度 (估算值：列宽 / 平均字符宽度)
+                # 平均字符宽度大约是 font_size * 0.5 到 0.6
+                avg_char_width = idx_font_size * 0.55
+                truncation_limit = int(col_width / avg_char_width) - 2  # -2 是留给省略号的位置
+                if truncation_limit < 5: truncation_limit = 5  # 最小保护
 
                 current_col = 0
                 current_y = margin_y
-                line_height = 14
-                header_height = 20
 
-                idx_page.insert_text((margin_x, 30), "Index of Found Words", fontsize=16, color=(0, 0, 0))
+                idx_page.insert_text((margin_x, 30), "Index of Words", fontsize=title_font_size, color=(0, 0, 0))
 
                 for lib_name, words_set in index_data_by_lib.items():
                     if not words_set:
                         continue
 
                     sorted_words = sorted(list(words_set), key=str.lower)
-
-                    # --- 【修复点】这里改成了 ['rgb'] ---
                     lib_color = final_configs[lib_name]['rgb']
 
                     needed_height = header_height + line_height
@@ -346,7 +369,9 @@ if process_btn and uploaded_pdf and final_configs:
 
                     current_x = margin_x + current_col * (col_width + col_gap)
 
-                    idx_page.insert_text((current_x, current_y), f"■ {lib_name}", fontsize=10, color=lib_color)
+                    # 绘制词库标题
+                    idx_page.insert_text((current_x, current_y), f"■ {lib_name}", fontsize=lib_title_font_size,
+                                         color=lib_color)
                     current_y += header_height
 
                     for word in sorted_words:
@@ -359,8 +384,9 @@ if process_btn and uploaded_pdf and final_configs:
 
                             current_x = margin_x + current_col * (col_width + col_gap)
 
-                        display_word = word if len(word) < 25 else word[:22] + "..."
-                        idx_page.insert_text((current_x, current_y), f"  {display_word}", fontsize=8,
+                        # 动态截断
+                        display_word = word if len(word) < truncation_limit else word[:truncation_limit] + "..."
+                        idx_page.insert_text((current_x, current_y), f"  {display_word}", fontsize=idx_font_size,
                                              color=(0.2, 0.2, 0.2))
                         current_y += line_height
 
@@ -383,7 +409,7 @@ if process_btn and uploaded_pdf and final_configs:
             st.download_button(
                 "📥 下载结果 PDF",
                 data=file,
-                file_name=f"Highlight_Index_{uploaded_pdf.name}",
+                file_name=f"Highlight_{uploaded_pdf.name}",
                 mime="application/pdf",
                 type="primary"
             )
