@@ -113,6 +113,7 @@ with st.sidebar:
         # 初始化编辑器变量
         target_lib_name = ""
         target_words_str = ""
+        # 移除了 target_color 变量的初始化，因为这里不再编辑颜色
         is_editing_existing = False
 
         if edit_mode_selection == "➕ 新建词库":
@@ -126,6 +127,7 @@ with st.sidebar:
             existing_data = st.session_state['word_libraries'][target_lib_name]
             # 将列表转回字符串显示
             target_words_str = ", ".join(existing_data['words'])
+            # 移除了颜色获取逻辑
 
         # 单词输入说明
         st.caption("📝 **单词输入格式说明**：")
@@ -152,7 +154,8 @@ with st.sidebar:
                     clean_words = sorted(list(set([w.strip() for w in raw_words if w.strip()])))
 
                     if clean_words:
-                        # 保持原有的颜色
+                        # 保持原有的颜色（如果是编辑），如果是新建则默认黄色
+                        # 因为这里不再设置颜色，所以需要小心保留原有颜色属性
                         current_color = '#FFFF00'
                         if is_editing_existing:
                             current_color = st.session_state['word_libraries'][target_lib_name].get('default_color',
@@ -160,10 +163,10 @@ with st.sidebar:
 
                         st.session_state['word_libraries'][target_lib_name] = {
                             'words': clean_words,
-                            'default_color': current_color
+                            'default_color': current_color  # 继承或使用默认
                         }
                         st.success(f"已保存! 共 {len(clean_words)} 词")
-                        st.rerun()
+                        st.rerun()  # 刷新页面以更新选择列表
                     else:
                         st.warning("词库不能为空")
                 else:
@@ -212,11 +215,16 @@ with st.sidebar:
 
     repeat_opacity = st.session_state['opacity_value']
 
+    # ---------------------------------------------------------
+    # 【逻辑重组】先选择高亮词库，再配置索引页
+    # ---------------------------------------------------------
+
     final_configs = {}
     selected_highlight_libs = []
 
     if st.session_state['word_libraries']:
         all_libs = list(st.session_state['word_libraries'].keys())
+        # 这里是“选择高亮词库”
         selected_highlight_libs = st.multiselect("选择高亮词库", all_libs, default=all_libs)
 
         if selected_highlight_libs:
@@ -226,6 +234,7 @@ with st.sidebar:
                     count = len(st.session_state['word_libraries'][name]['words'])
                     st.caption(f"**{name}** ({count} 词)")
                 with col2:
+                    # 颜色设置仅在这里进行
                     c = st.color_picker(f"C-{name}", st.session_state['word_libraries'][name]['default_color'],
                                         key=f"c_{name}")
 
@@ -236,7 +245,7 @@ with st.sidebar:
 
     st.divider()
 
-    # --- 索引页高级设置 ---
+    # --- 索引页高级设置 (移到高亮选择下方，逻辑关联) ---
     generate_index = st.checkbox("生成文末单词索引 (Index Page)", value=True)
 
     idx_col_count = 4
@@ -258,12 +267,13 @@ with st.sidebar:
         with col2:
             idx_font_size = st.number_input("索引字号", min_value=8, max_value=16, value=10, step=1)
 
+        # 【修改点 3】仅显示“已选高亮词库”供索引选择
         if selected_highlight_libs:
             st.caption("选择要包含在索引页中的词库：")
             index_target_libs = st.multiselect(
                 "索引词库选择",
-                options=selected_highlight_libs,
-                default=selected_highlight_libs,
+                options=selected_highlight_libs,  # 数据源来自上方选中的词库
+                default=selected_highlight_libs,  # 默认全选
                 label_visibility="collapsed"
             )
         else:
@@ -275,6 +285,10 @@ with st.sidebar:
     st.subheader("4. 预览设置")
     enable_preview = st.checkbox("👀 生成在线预览（取消可加速）", value=True,
                                  help="取消勾选可以加快生成速度，生成后只显示下载按钮，不加载预览界面。")
+
+    # 【修改点 2】新增：仅生成索引页开关 (放置在生成按钮上方)
+    generate_index_only = st.checkbox("📑 仅生成单词索引页 (不含原文)", value=False,
+                                      help="勾选后，生成的文件将只包含单词列表索引，不包含原PDF内容，且不会进行高亮渲染。")
 
     st.divider()
     process_btn = st.button("🚀 生成高亮文件", type="primary", use_container_width=True)
@@ -298,8 +312,9 @@ else:
 st.markdown(
     "Tip：**首次**出现的单词使用**深色**，**重复**出现的单词自动按**透明度**变浅；选择生成文末单词索引，将在文末附上**高亮单词列表**。")
 
-# --- 处理逻辑 ---
+# --- 处理逻辑 (优化后的版本) ---
 if process_btn:
+    # 1. 具体的错误提示
     if not uploaded_pdf:
         st.error("❌ 请先上传 PDF 文件（在侧边栏第 1 步）。")
     elif not st.session_state['word_libraries']:
@@ -407,9 +422,12 @@ if process_btn:
                                     index_data_by_lib[lib_name][origin_word] = set()
                                 index_data_by_lib[lib_name][origin_word].add(current_text)
 
-                            annot = page.add_highlight_annot(current_rect)
-                            annot.set_colors(stroke=use_color)
-                            annot.update()
+                            # 【修改点 3】如果不只是生成索引，才进行高亮
+                            if not generate_index_only:
+                                annot = page.add_highlight_annot(current_rect)
+                                annot.set_colors(stroke=use_color)
+                                annot.update()
+
                             total_stats[lib_name] += 1
 
                 for lib_name, p_cfg in processed_configs.items():
@@ -429,19 +447,38 @@ if process_btn:
                                     index_data_by_lib[lib_name][phrase] = set()
                                 index_data_by_lib[lib_name][phrase].add(phrase)
 
-                                annot = page.add_highlight_annot(quad)
-                                annot.set_colors(stroke=use_color)
-                                annot.update()
+                                # 【修改点 3】如果不只是生成索引，才进行高亮
+                                if not generate_index_only:
+                                    annot = page.add_highlight_annot(quad)
+                                    annot.set_colors(stroke=use_color)
+                                    annot.update()
+
                                 total_stats[lib_name] += 1
 
             # --- 索引生成 ---
-            if generate_index:
+            # 如果勾选了“仅生成索引”，或者虽然没勾选但 generate_index 也是 True，都会进入这里计算索引页
+            # 区别在于最后保存什么
+
+            idx_doc = None  # 用于存储独立的索引文档
+
+            if generate_index or generate_index_only:
                 final_index_data = {k: v for k, v in index_data_by_lib.items() if k in index_target_libs}
                 has_any_words = any(len(words_dict) > 0 for words_dict in final_index_data.values())
 
                 if has_any_words:
                     status_text.text(f"📄 正在排版索引页...")
-                    idx_page = doc.new_page()
+
+                    # 如果仅生成索引，我们需要一个新的空白文档，而不是在原文档后面追加
+                    if generate_index_only:
+                        # 创建一个新的空 PDF
+                        idx_doc = fitz.open()
+                        # 获取原文档的尺寸作为参考 (或使用 A4 默认)
+                        # 这里我们新建页面，默认是 A4 大小
+                        idx_page = idx_doc.new_page()
+                    else:
+                        # 在原文档后追加
+                        idx_page = doc.new_page()
+
                     page_width = idx_page.rect.width
                     page_height = idx_page.rect.height
 
@@ -478,7 +515,10 @@ if process_btn:
                             current_col += 1
                             current_y = margin_y
                             if current_col >= col_count:
-                                idx_page = doc.new_page()
+                                if generate_index_only:
+                                    idx_page = idx_doc.new_page()
+                                else:
+                                    idx_page = doc.new_page()
                                 current_col = 0
                         current_x = margin_x + current_col * (col_width + col_gap)
 
@@ -515,7 +555,10 @@ if process_btn:
                                 current_col += 1
                                 current_y = margin_y
                                 if current_col >= col_count:
-                                    idx_page = doc.new_page()
+                                    if generate_index_only:
+                                        idx_page = idx_doc.new_page()
+                                    else:
+                                        idx_page = doc.new_page()
                                     current_col = 0
                                 current_x = margin_x + current_col * (col_width + col_gap)
 
@@ -534,13 +577,23 @@ if process_btn:
 
             status_text.text("💾 正在保存结果...")
             output_path = tmp_input_path.replace(".pdf", "_highlighted_index.pdf")
-            doc.save(output_path, garbage=4, deflate=True)
-            doc.close()
+
+            # 【修改点 4】根据模式决定保存哪个对象
+            if generate_index_only and idx_doc:
+                idx_doc.save(output_path, garbage=4, deflate=True)
+                idx_doc.close()
+                doc.close()  # 关闭原文档
+            else:
+                # 正常高亮模式
+                doc.save(output_path, garbage=4, deflate=True)
+                doc.close()
 
             # 将结果存入 Session State
             with open(output_path, "rb") as file:
                 st.session_state['processed_pdf_data'] = file.read()
-                st.session_state['processed_file_name'] = f"Highlight_{uploaded_pdf.name}"
+                # 更改文件名后缀以区分
+                prefix = "IndexOnly_" if generate_index_only else "Highlight_"
+                st.session_state['processed_file_name'] = f"{prefix}{uploaded_pdf.name}"
 
             # 重置页码状态
             temp_doc = fitz.open(stream=st.session_state['processed_pdf_data'], filetype="pdf")
@@ -659,8 +712,7 @@ if st.session_state['processed_pdf_data'] is not None:
                     st.error(f"预览加载失败: {e}")
 
     else:
-        # 【修改点 3】如果未启用预览：只显示下载完整版按钮
-        # 不加载 fitz 计算，不显示预览组件，直接从 session 拿数据
+        # 如果未启用预览：只显示下载完整版按钮
         st.download_button(
             "📥 下载结果 PDF",
             data=st.session_state['processed_pdf_data'],
