@@ -449,6 +449,7 @@ if process_btn and uploaded_pdf and final_configs:
         # 将结果存入 Session State
         with open(output_path, "rb") as file:
             st.session_state['processed_pdf_data'] = file.read()
+            # 基础文件名
             st.session_state['processed_file_name'] = f"Highlight_{uploaded_pdf.name}"
 
         progress_bar.progress(100)
@@ -469,21 +470,69 @@ if st.session_state['processed_pdf_data'] is not None:
     st.divider()
     st.subheader("📂 结果区域")
 
+    # 1. 准备数据：获取总页数，用于设置范围选择器
+    # 注意：fitz.open 可以直接读取 bytes
+    doc_result = fitz.open(stream=st.session_state['processed_pdf_data'], filetype="pdf")
+    total_result_pages = len(doc_result)
+
+    # 2. 页面范围选择 UI
+    st.caption("选择预览和下载的页面范围：")
+    col_p1, col_p2, col_opt = st.columns([1, 1, 2])
+
+    with col_p1:
+        start_page = st.number_input("起始页", min_value=1, max_value=total_result_pages, value=1, step=1)
+    with col_p2:
+        end_page = st.number_input("结束页", min_value=start_page, max_value=total_result_pages,
+                                   value=total_result_pages, step=1)
+
+    with col_opt:
+        st.write("")  # 占位对齐
+        st.write("")
+        only_dl_preview = st.checkbox("⬇️ 仅下载上方选中的预览页数", value=False)
+
+    st.divider()
+
+    # 3. 动态切片逻辑
+    # 如果用户选择的不是全部页面，或者只是为了预览，我们需要切片
+    # 默认 target_data 是完整数据
+    target_pdf_data = st.session_state['processed_pdf_data']
+
+    # 如果范围不是 1 到 最后一页，则进行切片
+    if start_page != 1 or end_page != total_result_pages:
+        # 创建一个新的 PDF 对象用于存放切片
+        doc_slice = fitz.open()
+        # insert_pdf 使用 0-based 索引，所以要 -1
+        doc_slice.insert_pdf(doc_result, from_page=start_page - 1, to_page=end_page - 1)
+        target_pdf_data = doc_slice.tobytes()
+        doc_slice.close()
+
+    doc_result.close()  # 释放资源
+
+    # 4. 确定下载用的数据和文件名
+    if only_dl_preview:
+        download_data = target_pdf_data
+        download_name = "Highlight_preview_" + uploaded_pdf.name
+    else:
+        download_data = st.session_state['processed_pdf_data']
+        download_name = st.session_state['processed_file_name']
+
+    # 5. 显示下载和预览
     col_dl, col_preview = st.columns([1, 4])
 
     with col_dl:
         st.download_button(
             "📥 下载结果 PDF",
-            data=st.session_state['processed_pdf_data'],
-            file_name=st.session_state['processed_file_name'],
+            data=download_data,
+            file_name=download_name,
             mime="application/pdf",
             type="primary"
         )
 
     with col_preview:
-        # 【修改点】默认勾选预览 (value=True)
-        if st.checkbox("👀 在线预览结果 PDF (展开/收起)", value=True):
+        # 【修改点】默认不勾选预览 (value=False)
+        if st.checkbox("👀 在线预览结果 PDF (展开/收起)", value=False):
             try:
-                pdf_viewer(input=st.session_state['processed_pdf_data'], width=800)
+                # 预览始终显示当前切片范围 (target_pdf_data)
+                pdf_viewer(input=target_pdf_data, width=800)
             except Exception as e:
                 st.error(f"预览加载失败: {e}")
