@@ -5,7 +5,7 @@ import tempfile
 import os
 import gc
 import nltk
-import base64  # 【新增】用于PDF预览编码
+import base64
 from nltk.stem import SnowballStemmer
 
 # --- 页面配置 ---
@@ -481,22 +481,24 @@ if process_btn and uploaded_pdf and final_configs:
         with open(output_path, "rb") as file:
             pdf_data = file.read()
 
-        # 1. 下载按钮
-        st.download_button(
-            "📥 下载结果 PDF",
-            data=pdf_data,
-            file_name=f"Highlight_{uploaded_pdf.name}",
-            mime="application/pdf",
-            type="primary"
-        )
+        col_dl, col_preview = st.columns([1, 4])
 
-        # 2. 预览选项
-        if st.checkbox("👀 预览结果 PDF", value=False):
-            # 将二进制数据编码为 base64
+        with col_dl:
+            # 1. 下载按钮
+            st.download_button(
+                "📥 下载结果 PDF",
+                data=pdf_data,
+                file_name=f"Highlight_{uploaded_pdf.name}",
+                mime="application/pdf",
+                type="primary"
+            )
+
+        with col_preview:
+            # 2. 预览链接
             base64_pdf = base64.b64encode(pdf_data).decode('utf-8')
-            # 嵌入 HTML iframe
-            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf"></iframe>'
-            st.markdown(pdf_display, unsafe_allow_html=True)
+            # 使用 Data URI 创建一个点击在新标签页打开的链接
+            pdf_link = f'<a href="data:application/pdf;base64,{base64_pdf}" target="_blank" style="display: inline-block; padding: 0.5rem 1rem; background-color: #f0f2f6; color: #31333F; text-decoration: none; border-radius: 4px; border: 1px solid #d6d6d8;">👀 在新标签页中预览结果 PDF</a>'
+            st.markdown(pdf_link, unsafe_allow_html=True)
 
         # 清理临时文件
         os.unlink(tmp_input_path)
