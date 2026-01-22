@@ -52,6 +52,17 @@ def get_lighter_color(rgb, factor):
 if 'word_libraries' not in st.session_state:
     st.session_state['word_libraries'] = {}
 
+# 【新增】初始化透明度状态，默认 0.20
+if 'opacity_value' not in st.session_state:
+    st.session_state['opacity_value'] = 0.20
+
+# 【新增】回调函数：用于同步滑块和输入框
+def update_opacity_from_slider():
+    st.session_state['opacity_value'] = st.session_state['slider_widget']
+
+def update_opacity_from_input():
+    st.session_state['opacity_value'] = st.session_state['input_widget']
+
 # --- 侧边栏 UI ---
 with st.sidebar:
     st.title("🌟 效果设置")
@@ -92,15 +103,41 @@ with st.sidebar:
     st.subheader("3. 匹配与视觉")
     use_stemming = st.checkbox("启用智能词形匹配 (Stemming)", value=True)
 
-    # 【修改点 1】滑块逻辑翻转：标题改为透明度，逻辑改为 1.0 为原色
-    repeat_opacity = st.slider(
-        "重复单词高亮透明度 (1.0=原色, 0.0=透明)",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.4,  # 默认 0.4 透明度 (相当于之前的 0.6 淡化)
-        step=0.01,
-        help="控制重复出现的单词高亮颜色深浅。1.00 表示保持最深的原色，0.00 表示完全透明（白色）。"
-    )
+    st.write("重复单词高亮透明度 (1.0=原色, 0.0=透明)")
+
+    # 【新增】使用列布局放置输入框和滑块
+    col_input, col_slider = st.columns([1, 2.5])  # 左窄右宽
+
+    with col_input:
+        # 数字输入框
+        st.number_input(
+            label="数值输入",
+            label_visibility="collapsed",
+            min_value=0.0,
+            max_value=1.0,
+            step=0.01,
+            value=st.session_state['opacity_value'],  # 绑定 Session State
+            key='input_widget',
+            on_change=update_opacity_from_input,      # 绑定回调
+            format="%.2f"
+        )
+
+    with col_slider:
+        # 滑块
+        st.slider(
+            label="滑块调节",
+            label_visibility="collapsed",
+            min_value=0.0,
+            max_value=1.0,
+            step=0.01,
+            value=st.session_state['opacity_value'],  # 绑定 Session State
+            key='slider_widget',
+            on_change=update_opacity_from_slider,     # 绑定回调
+            help="控制重复出现的单词高亮颜色深浅。1.00 表示保持最深的原色，0.00 表示完全透明（白色）。"
+        )
+
+    # 将最终值赋给 logic 变量供后续使用
+    repeat_opacity = st.session_state['opacity_value']
 
     final_configs = {}
 
@@ -159,7 +196,7 @@ if process_btn and uploaded_pdf and final_configs:
         # --- 预处理配置 ---
         processed_configs = {}
 
-        # 【修改点 2】计算混白比例 (Whiteness Factor)
+        # 计算混白比例 (Whiteness Factor)
         # 透明度 1.0 -> 混白 0.0 (原色)
         # 透明度 0.0 -> 混白 1.0 (纯白)
         whiteness_factor = 1.0 - repeat_opacity
