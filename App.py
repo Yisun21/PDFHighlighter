@@ -106,15 +106,18 @@ with st.sidebar:
     idx_col_count = 4
     idx_font_size = 10
     index_target_libs = []
-    show_variants = False  # 默认不显示
+    show_variants = False
 
     if generate_index:
-        # 【修改点 1】新增显示变体选项，并根据它决定默认列数
-        show_variants = st.checkbox("在索引中显示具体单词变体 (例如: run -> running, ran)", value=True)
+        # 【修改点 1】逻辑优化：只有开启 Stemming 才询问是否显示变体
+        if use_stemming:
+            show_variants = st.checkbox("在索引中显示文内单词变体 (例如: run -> running, ran)", value=True)
+        else:
+            show_variants = False  # 精确匹配没有变体，强制为False
 
         # 动态设置默认列数索引：
-        # 如果显示变体(True)，index=1 (对应列表中的2列)
-        # 如果不显示(False)，index=3 (对应列表中的4列)
+        # 如果显示变体(True)，index=1 (2列)
+        # 如果不显示(False)，index=3 (4列)
         default_col_index = 1 if show_variants else 3
 
         col1, col2 = st.columns(2)
@@ -406,7 +409,7 @@ if process_btn and uploaded_pdf and final_configs:
 
                     for origin_word in sorted_origins:
 
-                        # 【修改点 2】 根据是否勾选 show_variants 来决定是否准备变体数据
+                        # 根据是否勾选 show_variants 来决定是否准备变体数据
                         display_variations = []
                         if show_variants:
                             found_variations = words_dict[origin_word]
