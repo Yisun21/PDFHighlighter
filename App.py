@@ -5,6 +5,7 @@ import tempfile
 import os
 import gc
 import nltk
+import base64  # 【新增】用于PDF预览编码
 from nltk.stem import SnowballStemmer
 
 # --- 页面配置 ---
@@ -109,15 +110,13 @@ with st.sidebar:
     show_variants = False
 
     if generate_index:
-        # 【修改点 1】逻辑优化：只有开启 Stemming 才询问是否显示变体
+        # 逻辑优化：只有开启 Stemming 才询问是否显示变体
         if use_stemming:
             show_variants = st.checkbox("在索引中显示文内单词变体 (例如: run -> running, ran)", value=True)
         else:
             show_variants = False  # 精确匹配没有变体，强制为False
 
-        # 动态设置默认列数索引：
-        # 如果显示变体(True)，index=1 (2列)
-        # 如果不显示(False)，index=3 (4列)
+        # 动态设置默认列数索引
         default_col_index = 1 if show_variants else 3
 
         col1, col2 = st.columns(2)
@@ -476,15 +475,30 @@ if process_btn and uploaded_pdf and final_configs:
         for idx, (name, count) in enumerate(total_stats.items()):
             cols[idx].metric(label=name, value=count)
 
-        with open(output_path, "rb") as file:
-            st.download_button(
-                "📥 下载结果 PDF",
-                data=file,
-                file_name=f"Highlight_{uploaded_pdf.name}",
-                mime="application/pdf",
-                type="primary"
-            )
+        # --- 【修改点】 预览与下载逻辑 ---
 
+        # 先读取文件内容到内存
+        with open(output_path, "rb") as file:
+            pdf_data = file.read()
+
+        # 1. 下载按钮
+        st.download_button(
+            "📥 下载结果 PDF",
+            data=pdf_data,
+            file_name=f"Highlight_{uploaded_pdf.name}",
+            mime="application/pdf",
+            type="primary"
+        )
+
+        # 2. 预览选项
+        if st.checkbox("👀 预览结果 PDF", value=False):
+            # 将二进制数据编码为 base64
+            base64_pdf = base64.b64encode(pdf_data).decode('utf-8')
+            # 嵌入 HTML iframe
+            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="800" type="application/pdf"></iframe>'
+            st.markdown(pdf_display, unsafe_allow_html=True)
+
+        # 清理临时文件
         os.unlink(tmp_input_path)
         os.unlink(output_path)
         gc.collect()
