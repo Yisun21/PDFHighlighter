@@ -5,7 +5,7 @@ import tempfile
 import os
 import gc
 import nltk
-import base64
+import base64  # 用于PDF预览编码
 from nltk.stem import SnowballStemmer
 
 # --- 页面配置 ---
@@ -475,16 +475,15 @@ if process_btn and uploaded_pdf and final_configs:
         for idx, (name, count) in enumerate(total_stats.items()):
             cols[idx].metric(label=name, value=count)
 
-        # --- 【修改点】 预览与下载逻辑 ---
+        # --- 【修改点】 修正后的预览逻辑 ---
 
-        # 先读取文件内容到内存
+        # 读取文件内容
         with open(output_path, "rb") as file:
             pdf_data = file.read()
 
         col_dl, col_preview = st.columns([1, 4])
 
         with col_dl:
-            # 1. 下载按钮
             st.download_button(
                 "📥 下载结果 PDF",
                 data=pdf_data,
@@ -493,12 +492,12 @@ if process_btn and uploaded_pdf and final_configs:
                 type="primary"
             )
 
-        with col_preview:
-            # 2. 预览链接
+        # 使用复选框控制内嵌预览
+        if st.checkbox("👀 在线预览结果 PDF (展开/收起)", value=False):
             base64_pdf = base64.b64encode(pdf_data).decode('utf-8')
-            # 使用 Data URI 创建一个点击在新标签页打开的链接
-            pdf_link = f'<a href="data:application/pdf;base64,{base64_pdf}" target="_blank" style="display: inline-block; padding: 0.5rem 1rem; background-color: #f0f2f6; color: #31333F; text-decoration: none; border-radius: 4px; border: 1px solid #d6d6d8;">👀 在新标签页中预览结果 PDF</a>'
-            st.markdown(pdf_link, unsafe_allow_html=True)
+            # 这里的 height="900px" 足够大，看起来像一个完整页面
+            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="900px" type="application/pdf" style="border: 1px solid #ddd; border-radius: 5px;"></iframe>'
+            st.markdown(pdf_display, unsafe_allow_html=True)
 
         # 清理临时文件
         os.unlink(tmp_input_path)
