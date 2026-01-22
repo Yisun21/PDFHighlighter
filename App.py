@@ -35,6 +35,11 @@ if 'processed_pdf_data' not in st.session_state:
 if 'processed_file_name' not in st.session_state:
     st.session_state['processed_file_name'] = ""
 
+# 【新增】页码控制的状态变量初始化
+if 'p_start' not in st.session_state: st.session_state['p_start'] = 1
+if 'p_end' not in st.session_state: st.session_state['p_end'] = 1
+if 'p_all' not in st.session_state: st.session_state['p_all'] = True
+
 
 # --- 缓存函数 ---
 @st.cache_data(ttl=3600)
@@ -198,6 +203,10 @@ with st.sidebar:
     if st.button("🗑️ 清除缓存"):
         st.session_state['word_libraries'] = {}
         st.session_state['processed_pdf_data'] = None
+        # 清除状态
+        st.session_state['p_start'] = 1
+        st.session_state['p_end'] = 1
+        st.session_state['p_all'] = True
         st.cache_data.clear()
         st.rerun()
 
@@ -209,7 +218,8 @@ if use_stemming:
 else:
     st.info("🔒 精确模式：仅匹配完全一致的单词。")
 
-st.markdown("Tip：**首次**出现的单词使用**深色**，**重复**出现的单词自动按**透明度**变浅。")
+st.markdown(
+    "Tip：**首次**出现的单词使用**深色**，**重复**出现的单词自动按**透明度**变浅；选择生成文末单词索引，将在文末附上**高亮单词列表**。")
 
 # --- 处理逻辑 ---
 if process_btn and uploaded_pdf and final_configs:
@@ -448,6 +458,16 @@ if process_btn and uploaded_pdf and final_configs:
             st.session_state['processed_pdf_data'] = file.read()
             st.session_state['processed_file_name'] = f"Highlight_{uploaded_pdf.name}"
 
+        # 【新增】每次生成新文件时，重置页码选择器的状态
+        # 获取新文件的总页数（为了安全，暂时读取一遍）
+        temp_doc = fitz.open(stream=st.session_state['processed_pdf_data'], filetype="pdf")
+        new_total_pages = len(temp_doc)
+        temp_doc.close()
+
+        st.session_state['p_start'] = 1
+        st.session_state['p_end'] = new_total_pages
+        st.session_state['p_all'] = True  # 默认全选
+
         progress_bar.progress(100)
         status_text.text("✅ 完成！")
 
@@ -466,9 +486,34 @@ if st.session_state['processed_pdf_data'] is not None:
     st.divider()
     st.subheader("📂 结果区域")
 
-    # 1. 准备数据：获取总页数，用于设置范围选择器
+    # 1. 准备数据
     doc_result = fitz.open(stream=st.session_state['processed_pdf_data'], filetype="pdf")
     total_result_pages = len(doc_result)
+
+
+    # --- 回调函数逻辑 ---
+    # 当勾选“全部预览”时：将页码设为首尾
+    def on_toggle_all():
+        if st.session_state['p_all']:
+            st.session_state['p_start'] = 1
+            st.session_state['p_end'] = total_result_pages
+
+
+    # 当手动修改页码时：取消“全部预览”勾选
+    # (同时我们也可以做一个检查：如果用户手动改回了1和Max，是否自动勾选？
+    #  用户要求：“更改起始页和结束页页数的时候，全部预览选项自动取消勾选”)
+    def on_page_change():
+        # 如果手动改的范围正好是全选，则保持或设为True？
+        # 按照“更改...自动取消”的字面意思，只要触碰了输入框回调，
+        # 且当前范围不等于全范围(或者严格执行"修改即取消")。
+        # 为了体验更好，如果手动设回了1-Max，我们可以让它变回True，
+        # 但如果严格按需求，只要动了数字且不等于全范围，就False。
+        # 这里使用严格逻辑：只要动了，先检查是否等于全范围。
+        if st.session_state['p_start'] == 1 and st.session_state['p_end'] == total_result_pages:
+            st.session_state['p_all'] = True
+        else:
+            st.session_state['p_all'] = False
+
 
     # 2. 页面范围选择 UI
     st.caption("选择预览和下载的页面范围：")
@@ -476,57 +521,53 @@ if st.session_state['processed_pdf_data'] is not None:
 
     with col_opt:
         st.write("")  # 对齐占位
-        # 【修改点】增加“全部预览”勾选框，默认勾选
-        preview_all = st.checkbox("🔄 全部预览 (默认所有页)", value=True)
-        only_dl_preview = st.checkbox("⬇️ 仅下载上方选中的预览页数", value=False)
+        # 【修改点】复选框绑定 session state 和 回调
+        st.checkbox("🔄 全部预览 (默认所有页)", key='p_all', on_change=on_toggle_all)
 
-    # 逻辑：如果勾选“全部预览”，禁用输入框并设为1-Total；否则允许输入
-    if preview_all:
-        val_start = 1
-        val_end = total_result_pages
-        disable_inputs = True
-    else:
-        val_start = 1
-        val_end = total_result_pages
-        disable_inputs = False
+        # 【修改点】仅当不全选时，才显示“仅下载预览页数”
+        only_dl_preview = False
+        if not st.session_state['p_all']:
+            only_dl_preview = st.checkbox("⬇️ 仅下载上方选中的预览页数", value=False)
 
     with col_p1:
-        # 如果 preview_all 为 True，输入框显示 1 且不可编辑
-        # 否则显示当前值（session保持）或默认值
-        start_page = st.number_input(
+        # 【修改点】输入框绑定 session state 和 回调，移除 disabled
+        st.number_input(
             "起始页",
             min_value=1,
             max_value=total_result_pages,
-            value=val_start if preview_all else 1,
             step=1,
-            disabled=disable_inputs
+            key='p_start',
+            on_change=on_page_change
         )
     with col_p2:
-        end_page = st.number_input(
+        st.number_input(
             "结束页",
-            min_value=start_page,
+            min_value=st.session_state['p_start'],
             max_value=total_result_pages,
-            value=val_end if preview_all else total_result_pages,
             step=1,
-            disabled=disable_inputs
+            key='p_end',
+            on_change=on_page_change
         )
 
     st.divider()
 
     # 3. 动态切片逻辑
     target_pdf_data = st.session_state['processed_pdf_data']
+    start_page_val = st.session_state['p_start']
+    end_page_val = st.session_state['p_end']
 
-    # 如果范围不是 1 到 最后一页，则进行切片
-    if start_page != 1 or end_page != total_result_pages:
+    if start_page_val != 1 or end_page_val != total_result_pages:
         doc_slice = fitz.open()
-        doc_slice.insert_pdf(doc_result, from_page=start_page - 1, to_page=end_page - 1)
+        # insert_pdf 使用 0-based 索引
+        doc_slice.insert_pdf(doc_result, from_page=start_page_val - 1, to_page=end_page_val - 1)
         target_pdf_data = doc_slice.tobytes()
         doc_slice.close()
 
     doc_result.close()
 
     # 4. 确定下载用的数据和文件名
-    if only_dl_preview:
+    # 逻辑：如果只下载预览部分（且没全选），则用切片数据；否则用原数据
+    if only_dl_preview and not st.session_state['p_all']:
         download_data = target_pdf_data
         download_name = "Highlight_preview_" + uploaded_pdf.name
     else:
@@ -546,10 +587,9 @@ if st.session_state['processed_pdf_data'] is not None:
         )
 
     with col_preview:
-        # 【修改点】在线预览默认不勾选 (value=False)
+        # 默认不勾选预览
         if st.checkbox("👀 在线预览结果 PDF (展开/收起)", value=False):
             try:
-                # 预览始终显示当前切片范围 (target_pdf_data)
                 pdf_viewer(input=target_pdf_data, width=800)
             except Exception as e:
                 st.error(f"预览加载失败: {e}")
