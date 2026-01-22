@@ -304,264 +304,270 @@ else:
 st.markdown(
     "Tip：**首次**出现的单词使用**深色**，**重复**出现的单词自动按**透明度**变浅；选择生成文末单词索引，将在文末附上**高亮单词列表**。")
 
-# --- 处理逻辑 ---
-if process_btn and uploaded_pdf and final_configs:
+# --- 处理逻辑 (优化后的版本) ---
+if process_btn:
+    # 1. 具体的错误提示
+    if not uploaded_pdf:
+        st.error("❌ 请先上传 PDF 文件（在侧边栏第 1 步）。")
+    elif not st.session_state['word_libraries']:
+        st.error("❌ 还没有添加任何词库。请上传 Excel 或手动添加（在侧边栏第 2 步）。")
+    elif not final_configs:
+        st.error("❌ 请至少选择一个需要高亮的词库（在侧边栏第 3 步“选择高亮词库”中勾选）。")
 
-    progress_bar = st.progress(0)
-    status_text = st.empty()
+    # 2. 如果配置都齐全，才开始执行
+    else:
+        progress_bar = st.progress(0)
+        status_text = st.empty()
 
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_input:
-            tmp_input.write(uploaded_pdf.getvalue())
-            tmp_input_path = tmp_input.name
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_input:
+                tmp_input.write(uploaded_pdf.getvalue())
+                tmp_input_path = tmp_input.name
 
-        doc = fitz.open(tmp_input_path)
-        total_pages = len(doc)
-        total_stats = {name: 0 for name in final_configs}
+            doc = fitz.open(tmp_input_path)
+            total_pages = len(doc)
+            total_stats = {name: 0 for name in final_configs}
 
-        status_text.text("🔍 正在初始化...")
+            status_text.text("🔍 正在初始化...")
 
-        # --- 预处理配置 ---
-        processed_configs = {}
-        whiteness_factor = 1.0 - repeat_opacity
+            # --- 预处理配置 ---
+            processed_configs = {}
+            whiteness_factor = 1.0 - repeat_opacity
 
-        for name, config in final_configs.items():
-            words_list = config['words']
-            singles_stems = set()
-            singles_exact = set()
-            phrases = []
+            for name, config in final_configs.items():
+                words_list = config['words']
+                singles_stems = set()
+                singles_exact = set()
+                phrases = []
 
-            stem_to_origin_map = {}
-            exact_to_origin_map = {}
+                stem_to_origin_map = {}
+                exact_to_origin_map = {}
 
-            for w in words_list:
-                clean_w = w.strip()
-                if " " in clean_w:
-                    phrases.append(clean_w)
-                else:
-                    lower_w = clean_w.lower()
-                    singles_exact.add(lower_w)
-                    exact_to_origin_map[lower_w] = clean_w
-
-                    if use_stemming:
-                        stem_w = stemmer.stem(lower_w)
-                        singles_stems.add(stem_w)
-                        stem_to_origin_map[stem_w] = clean_w
-
-            base_rgb = config['rgb']
-            light_rgb = get_lighter_color(base_rgb, factor=whiteness_factor)
-
-            processed_configs[name] = {
-                'singles_stems': singles_stems,
-                'singles_exact': singles_exact,
-                'phrases': phrases,
-                'base_color': base_rgb,
-                'light_color': light_rgb,
-                'stem_map': stem_to_origin_map,
-                'exact_map': exact_to_origin_map
-            }
-
-        global_seen_items = {name: set() for name in final_configs}
-        index_data_by_lib = {name: {} for name in final_configs}
-
-        # --- 核心循环 ---
-        for i, page in enumerate(doc):
-            if i % 5 == 0:
-                progress_bar.progress((i + 1) / total_pages)
-                status_text.text(f"正在分析第 {i + 1} / {total_pages} 页...")
-
-            page_words = page.get_text("words")
-
-            for w_info in page_words:
-                current_text = w_info[4]
-                current_text_lower = current_text.lower()
-                current_rect = fitz.Rect(w_info[0], w_info[1], w_info[2], w_info[3])
-                current_stem = stemmer.stem(current_text_lower) if use_stemming else None
-
-                for lib_name, p_cfg in processed_configs.items():
-                    matched = False
-                    match_key = None
-                    origin_word = None
-
-                    if use_stemming:
-                        if current_stem in p_cfg['singles_stems']:
-                            matched = True
-                            match_key = current_stem
-                            origin_word = p_cfg['stem_map'].get(current_stem)
+                for w in words_list:
+                    clean_w = w.strip()
+                    if " " in clean_w:
+                        phrases.append(clean_w)
                     else:
-                        if current_text_lower in p_cfg['singles_exact']:
-                            matched = True
-                            match_key = current_text_lower
-                            origin_word = p_cfg['exact_map'].get(current_text_lower)
+                        lower_w = clean_w.lower()
+                        singles_exact.add(lower_w)
+                        exact_to_origin_map[lower_w] = clean_w
 
-                    if matched:
-                        if match_key not in global_seen_items[lib_name]:
-                            use_color = p_cfg['base_color']
-                            global_seen_items[lib_name].add(match_key)
+                        if use_stemming:
+                            stem_w = stemmer.stem(lower_w)
+                            singles_stems.add(stem_w)
+                            stem_to_origin_map[stem_w] = clean_w
+
+                base_rgb = config['rgb']
+                light_rgb = get_lighter_color(base_rgb, factor=whiteness_factor)
+
+                processed_configs[name] = {
+                    'singles_stems': singles_stems,
+                    'singles_exact': singles_exact,
+                    'phrases': phrases,
+                    'base_color': base_rgb,
+                    'light_color': light_rgb,
+                    'stem_map': stem_to_origin_map,
+                    'exact_map': exact_to_origin_map
+                }
+
+            global_seen_items = {name: set() for name in final_configs}
+            index_data_by_lib = {name: {} for name in final_configs}
+
+            # --- 核心循环 ---
+            for i, page in enumerate(doc):
+                if i % 5 == 0:
+                    progress_bar.progress((i + 1) / total_pages)
+                    status_text.text(f"正在分析第 {i + 1} / {total_pages} 页...")
+
+                page_words = page.get_text("words")
+
+                for w_info in page_words:
+                    current_text = w_info[4]
+                    current_text_lower = current_text.lower()
+                    current_rect = fitz.Rect(w_info[0], w_info[1], w_info[2], w_info[3])
+                    current_stem = stemmer.stem(current_text_lower) if use_stemming else None
+
+                    for lib_name, p_cfg in processed_configs.items():
+                        matched = False
+                        match_key = None
+                        origin_word = None
+
+                        if use_stemming:
+                            if current_stem in p_cfg['singles_stems']:
+                                matched = True
+                                match_key = current_stem
+                                origin_word = p_cfg['stem_map'].get(current_stem)
                         else:
-                            use_color = p_cfg['light_color']
+                            if current_text_lower in p_cfg['singles_exact']:
+                                matched = True
+                                match_key = current_text_lower
+                                origin_word = p_cfg['exact_map'].get(current_text_lower)
 
-                        if origin_word:
-                            if origin_word not in index_data_by_lib[lib_name]:
-                                index_data_by_lib[lib_name][origin_word] = set()
-                            index_data_by_lib[lib_name][origin_word].add(current_text)
-
-                        annot = page.add_highlight_annot(current_rect)
-                        annot.set_colors(stroke=use_color)
-                        annot.update()
-                        total_stats[lib_name] += 1
-
-            for lib_name, p_cfg in processed_configs.items():
-                for phrase in p_cfg['phrases']:
-                    quads_list = page.search_for(phrase, quads=True)
-                    if quads_list:
-                        for quad in quads_list:
-                            match_key = phrase.lower()
-
+                        if matched:
                             if match_key not in global_seen_items[lib_name]:
                                 use_color = p_cfg['base_color']
                                 global_seen_items[lib_name].add(match_key)
                             else:
                                 use_color = p_cfg['light_color']
 
-                            if phrase not in index_data_by_lib[lib_name]:
-                                index_data_by_lib[lib_name][phrase] = set()
-                            index_data_by_lib[lib_name][phrase].add(phrase)
+                            if origin_word:
+                                if origin_word not in index_data_by_lib[lib_name]:
+                                    index_data_by_lib[lib_name][origin_word] = set()
+                                index_data_by_lib[lib_name][origin_word].add(current_text)
 
-                            annot = page.add_highlight_annot(quad)
+                            annot = page.add_highlight_annot(current_rect)
                             annot.set_colors(stroke=use_color)
                             annot.update()
                             total_stats[lib_name] += 1
 
-        # --- 索引生成 ---
-        if generate_index:
-            final_index_data = {k: v for k, v in index_data_by_lib.items() if k in index_target_libs}
-            has_any_words = any(len(words_dict) > 0 for words_dict in final_index_data.values())
+                for lib_name, p_cfg in processed_configs.items():
+                    for phrase in p_cfg['phrases']:
+                        quads_list = page.search_for(phrase, quads=True)
+                        if quads_list:
+                            for quad in quads_list:
+                                match_key = phrase.lower()
 
-            if has_any_words:
-                status_text.text(f"📄 正在排版索引页...")
-                idx_page = doc.new_page()
-                page_width = idx_page.rect.width
-                page_height = idx_page.rect.height
-
-                margin_x, margin_y = 40, 50
-                col_gap = 15
-                col_count = idx_col_count
-                col_width = (page_width - 2 * margin_x - (col_count - 1) * col_gap) / col_count
-
-                line_height = idx_font_size * 1.5
-                header_height = idx_font_size * 2.0
-                title_font_size = idx_font_size + 8
-                lib_title_font_size = idx_font_size + 2
-                var_font_size = max(6, idx_font_size - 2)
-
-                avg_char_width = idx_font_size * 0.55
-                truncation_limit = int(col_width / avg_char_width) - 2
-                if truncation_limit < 5: truncation_limit = 5
-
-                var_avg_char_width = var_font_size * 0.55
-                var_truncation_limit = int(col_width / var_avg_char_width) - 4
-
-                current_col = 0
-                current_y = margin_y
-
-                idx_page.insert_text((margin_x, 30), "Index of Words", fontsize=title_font_size, color=(0, 0, 0))
-
-                for lib_name, words_dict in final_index_data.items():
-                    if not words_dict: continue
-                    sorted_origins = sorted(list(words_dict.keys()), key=str.lower)
-                    lib_color = final_configs[lib_name]['rgb']
-
-                    needed_height = header_height + line_height
-                    if current_y + needed_height > page_height - margin_y:
-                        current_col += 1
-                        current_y = margin_y
-                        if current_col >= col_count:
-                            idx_page = doc.new_page()
-                            current_col = 0
-                    current_x = margin_x + current_col * (col_width + col_gap)
-
-                    idx_page.insert_text((current_x, current_y), f"■ {lib_name}", fontsize=lib_title_font_size,
-                                         color=lib_color)
-                    current_y += header_height
-
-                    for origin_word in sorted_origins:
-                        display_variations = []
-                        if show_variants:
-                            found_variations = words_dict[origin_word]
-                            display_variations = [v for v in found_variations if v.lower() != origin_word.lower()]
-                            display_variations = sorted(list(set(display_variations)))
-
-                        var_lines = []
-                        if display_variations:
-                            current_var_line = "("
-                            for i, var in enumerate(display_variations):
-                                separator = ", " if i > 0 else ""
-                                if len(current_var_line + separator + var) > var_truncation_limit:
-                                    if i > 0: current_var_line += ","
-                                    var_lines.append(current_var_line)
-                                    current_var_line = "  " + var
+                                if match_key not in global_seen_items[lib_name]:
+                                    use_color = p_cfg['base_color']
+                                    global_seen_items[lib_name].add(match_key)
                                 else:
-                                    current_var_line += separator + var
-                            current_var_line += ")"
-                            var_lines.append(current_var_line)
+                                    use_color = p_cfg['light_color']
 
-                        item_height = line_height
-                        if var_lines:
-                            item_height += len(var_lines) * line_height
+                                if phrase not in index_data_by_lib[lib_name]:
+                                    index_data_by_lib[lib_name][phrase] = set()
+                                index_data_by_lib[lib_name][phrase].add(phrase)
 
-                        if current_y + item_height > page_height - margin_y:
+                                annot = page.add_highlight_annot(quad)
+                                annot.set_colors(stroke=use_color)
+                                annot.update()
+                                total_stats[lib_name] += 1
+
+            # --- 索引生成 ---
+            if generate_index:
+                final_index_data = {k: v for k, v in index_data_by_lib.items() if k in index_target_libs}
+                has_any_words = any(len(words_dict) > 0 for words_dict in final_index_data.values())
+
+                if has_any_words:
+                    status_text.text(f"📄 正在排版索引页...")
+                    idx_page = doc.new_page()
+                    page_width = idx_page.rect.width
+                    page_height = idx_page.rect.height
+
+                    margin_x, margin_y = 40, 50
+                    col_gap = 15
+                    col_count = idx_col_count
+                    col_width = (page_width - 2 * margin_x - (col_count - 1) * col_gap) / col_count
+
+                    line_height = idx_font_size * 1.5
+                    header_height = idx_font_size * 2.0
+                    title_font_size = idx_font_size + 8
+                    lib_title_font_size = idx_font_size + 2
+                    var_font_size = max(6, idx_font_size - 2)
+
+                    avg_char_width = idx_font_size * 0.55
+                    truncation_limit = int(col_width / avg_char_width) - 2
+                    if truncation_limit < 5: truncation_limit = 5
+
+                    var_avg_char_width = var_font_size * 0.55
+                    var_truncation_limit = int(col_width / var_avg_char_width) - 4
+
+                    current_col = 0
+                    current_y = margin_y
+
+                    idx_page.insert_text((margin_x, 30), "Index of Words", fontsize=title_font_size, color=(0, 0, 0))
+
+                    for lib_name, words_dict in final_index_data.items():
+                        if not words_dict: continue
+                        sorted_origins = sorted(list(words_dict.keys()), key=str.lower)
+                        lib_color = final_configs[lib_name]['rgb']
+
+                        needed_height = header_height + line_height
+                        if current_y + needed_height > page_height - margin_y:
                             current_col += 1
                             current_y = margin_y
                             if current_col >= col_count:
                                 idx_page = doc.new_page()
                                 current_col = 0
-                            current_x = margin_x + current_col * (col_width + col_gap)
+                        current_x = margin_x + current_col * (col_width + col_gap)
 
-                        display_word = origin_word if len(origin_word) < truncation_limit else origin_word[
-                                                                                               :truncation_limit] + "..."
-                        idx_page.insert_text((current_x, current_y), f"  {display_word}", fontsize=idx_font_size,
-                                             color=(0.2, 0.2, 0.2))
-                        current_y += line_height
+                        idx_page.insert_text((current_x, current_y), f"■ {lib_name}", fontsize=lib_title_font_size,
+                                             color=lib_color)
+                        current_y += header_height
 
-                        for v_line in var_lines:
-                            idx_page.insert_text((current_x + 10, current_y), v_line, fontsize=var_font_size,
-                                                 color=(0.5, 0.5, 0.5))
+                        for origin_word in sorted_origins:
+                            display_variations = []
+                            if show_variants:
+                                found_variations = words_dict[origin_word]
+                                display_variations = [v for v in found_variations if v.lower() != origin_word.lower()]
+                                display_variations = sorted(list(set(display_variations)))
+
+                            var_lines = []
+                            if display_variations:
+                                current_var_line = "("
+                                for i, var in enumerate(display_variations):
+                                    separator = ", " if i > 0 else ""
+                                    if len(current_var_line + separator + var) > var_truncation_limit:
+                                        if i > 0: current_var_line += ","
+                                        var_lines.append(current_var_line)
+                                        current_var_line = "  " + var
+                                    else:
+                                        current_var_line += separator + var
+                                current_var_line += ")"
+                                var_lines.append(current_var_line)
+
+                            item_height = line_height
+                            if var_lines:
+                                item_height += len(var_lines) * line_height
+
+                            if current_y + item_height > page_height - margin_y:
+                                current_col += 1
+                                current_y = margin_y
+                                if current_col >= col_count:
+                                    idx_page = doc.new_page()
+                                    current_col = 0
+                                current_x = margin_x + current_col * (col_width + col_gap)
+
+                            display_word = origin_word if len(origin_word) < truncation_limit else origin_word[
+                                                                                                   :truncation_limit] + "..."
+                            idx_page.insert_text((current_x, current_y), f"  {display_word}", fontsize=idx_font_size,
+                                                 color=(0.2, 0.2, 0.2))
                             current_y += line_height
 
-                    current_y += line_height / 2
+                            for v_line in var_lines:
+                                idx_page.insert_text((current_x + 10, current_y), v_line, fontsize=var_font_size,
+                                                     color=(0.5, 0.5, 0.5))
+                                current_y += line_height
 
-        status_text.text("💾 正在保存结果...")
-        output_path = tmp_input_path.replace(".pdf", "_highlighted_index.pdf")
-        doc.save(output_path, garbage=4, deflate=True)
-        doc.close()
+                        current_y += line_height / 2
 
-        # 将结果存入 Session State
-        with open(output_path, "rb") as file:
-            st.session_state['processed_pdf_data'] = file.read()
-            st.session_state['processed_file_name'] = f"Highlight_{uploaded_pdf.name}"
+            status_text.text("💾 正在保存结果...")
+            output_path = tmp_input_path.replace(".pdf", "_highlighted_index.pdf")
+            doc.save(output_path, garbage=4, deflate=True)
+            doc.close()
 
-        # 重置页码状态
-        temp_doc = fitz.open(stream=st.session_state['processed_pdf_data'], filetype="pdf")
-        new_total_pages = len(temp_doc)
-        temp_doc.close()
+            # 将结果存入 Session State
+            with open(output_path, "rb") as file:
+                st.session_state['processed_pdf_data'] = file.read()
+                st.session_state['processed_file_name'] = f"Highlight_{uploaded_pdf.name}"
 
-        st.session_state['p_start'] = 1
-        st.session_state['p_end'] = new_total_pages
-        st.session_state['p_all'] = True
+            # 重置页码状态
+            temp_doc = fitz.open(stream=st.session_state['processed_pdf_data'], filetype="pdf")
+            new_total_pages = len(temp_doc)
+            temp_doc.close()
 
-        progress_bar.progress(100)
-        status_text.text("✅ 完成！")
+            st.session_state['p_start'] = 1
+            st.session_state['p_end'] = new_total_pages
+            st.session_state['p_all'] = True
 
-        os.unlink(tmp_input_path)
-        os.unlink(output_path)
-        gc.collect()
+            progress_bar.progress(100)
+            status_text.text("✅ 完成！")
 
-    except Exception as e:
-        st.error(f"出错: {e}")
+            os.unlink(tmp_input_path)
+            os.unlink(output_path)
+            gc.collect()
 
-elif process_btn:
-    st.error("请检查配置。")
+        except Exception as e:
+            st.error(f"出错: {e}")
 
 # --- 结果显示区域 (独立渲染) ---
 if st.session_state['processed_pdf_data'] is not None:
