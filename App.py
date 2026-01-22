@@ -71,7 +71,7 @@ with st.sidebar:
                 if words:
                     st.session_state['word_libraries'][excel_file.name] = {
                         'words': words,
-                        'default_color': '#FF0000'  # 默认红色
+                        'default_color': '#FFFF00'  # 默认黄色
                     }
                     st.toast(f"✅ 已缓存: {excel_file.name} (共 {len(words)} 词)")
 
@@ -83,7 +83,7 @@ with st.sidebar:
                 words = [w.strip() for w in manual_text.replace('\n', ',').split(',') if w.strip()]
                 st.session_state['word_libraries'][manual_name] = {
                     'words': words,
-                    'default_color': '#00FF00'
+                    'default_color': '#FFFF00'
                 }
                 st.rerun()
 
