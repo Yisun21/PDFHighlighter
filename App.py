@@ -254,7 +254,7 @@ if process_btn and uploaded_pdf and final_configs:
         # --- 追踪记录器 ---
         global_seen_items = {name: set() for name in final_configs}
 
-        # 【修改点 1】结构升级：{词库名: {词库原词: {PDF实际出现的单词集合}}}
+        # {词库名: {词库原词: {PDF实际出现的单词集合}}}
         index_data_by_lib = {name: {} for name in final_configs}
 
         # --- 核心循环 ---
@@ -295,11 +295,9 @@ if process_btn and uploaded_pdf and final_configs:
                         else:
                             use_color = p_cfg['light_color']
 
-                        # 【修改点 2】记录实际出现的单词
                         if origin_word:
                             if origin_word not in index_data_by_lib[lib_name]:
                                 index_data_by_lib[lib_name][origin_word] = set()
-                            # 将实际单词加入集合
                             index_data_by_lib[lib_name][origin_word].add(current_text)
 
                         annot = page.add_highlight_annot(current_rect)
@@ -321,8 +319,6 @@ if process_btn and uploaded_pdf and final_configs:
                             else:
                                 use_color = p_cfg['light_color']
 
-                            # 短语由于 search_for 机制，难以直接获取 PDF 原文大小写
-                            # 这里简单记录词库里的 phrase，短语变体情况较少
                             if phrase not in index_data_by_lib[lib_name]:
                                 index_data_by_lib[lib_name][phrase] = set()
                             index_data_by_lib[lib_name][phrase].add(phrase)
@@ -334,7 +330,6 @@ if process_btn and uploaded_pdf and final_configs:
 
         # --- 动态索引排版逻辑 ---
         if generate_index:
-            # 过滤数据：只保留用户勾选的词库
             final_index_data = {
                 k: v for k, v in index_data_by_lib.items()
                 if k in index_target_libs
@@ -362,29 +357,29 @@ if process_btn and uploaded_pdf and final_configs:
                 title_font_size = idx_font_size + 8
                 lib_title_font_size = idx_font_size + 2
 
-                # 变体文字字号（稍微小一点）
-                var_font_size = max(6, idx_font_size - 2)
+                var_font_size = max(6, idx_font_size - 2)  # 变体字号
 
-                # 动态计算截断长度
+                # 主单词截断长度
                 avg_char_width = idx_font_size * 0.55
                 truncation_limit = int(col_width / avg_char_width) - 2
                 if truncation_limit < 5: truncation_limit = 5
+
+                # 【新增】变体单词换行阈值 (因为变体字号小，一行能塞更多字)
+                var_avg_char_width = var_font_size * 0.55
+                var_truncation_limit = int(col_width / var_avg_char_width) - 4  # -4 for indentation
 
                 current_col = 0
                 current_y = margin_y
 
                 idx_page.insert_text((margin_x, 30), "Index of Words", fontsize=title_font_size, color=(0, 0, 0))
 
-                # 遍历词库
                 for lib_name, words_dict in final_index_data.items():
                     if not words_dict:
                         continue
 
-                    # 排序：按词库原词排序
                     sorted_origins = sorted(list(words_dict.keys()), key=str.lower)
                     lib_color = final_configs[lib_name]['rgb']
 
-                    # 检查空间（标题）
                     needed_height = header_height + line_height
                     if current_y + needed_height > page_height - margin_y:
                         current_col += 1
@@ -395,26 +390,41 @@ if process_btn and uploaded_pdf and final_configs:
 
                     current_x = margin_x + current_col * (col_width + col_gap)
 
-                    # 绘制词库标题
                     idx_page.insert_text((current_x, current_y), f"■ {lib_name}", fontsize=lib_title_font_size,
                                          color=lib_color)
                     current_y += header_height
 
-                    # 遍历该词库下的单词
                     for origin_word in sorted_origins:
-                        # 获取变体集合
                         found_variations = words_dict[origin_word]
-                        # 过滤掉和原词一模一样的（忽略大小写比较）
                         display_variations = [
                             v for v in found_variations
                             if v.lower() != origin_word.lower()
                         ]
-                        display_variations = sorted(list(set(display_variations)))  # 去重并排序
+                        display_variations = sorted(list(set(display_variations)))
 
-                        # 计算本条目需要的高度 (主词 + 变体行(如果有))
-                        item_height = line_height
+                        # --- 【修改点】变体自动换行预计算 ---
+                        var_lines = []
                         if display_variations:
-                            item_height += line_height  # 额外一行给变体
+                            current_var_line = "("
+                            for i, var in enumerate(display_variations):
+                                separator = ", " if i > 0 else ""
+                                # 检查加入这个词是否会超出一行
+                                if len(current_var_line + separator + var) > var_truncation_limit:
+                                    # 换行前加个逗号（如果是中间换行，通常不需要，但为了美观可选择保留）
+                                    # 这里简单处理：直接把当前累积的存入，开启新行
+                                    if i > 0:  # 如果不是第一个词，上一行补逗号
+                                        current_var_line += ","
+                                    var_lines.append(current_var_line)
+                                    current_var_line = "  " + var  # 新行缩进
+                                else:
+                                    current_var_line += separator + var
+                            current_var_line += ")"
+                            var_lines.append(current_var_line)
+
+                        # 计算本条目需要的总高度
+                        item_height = line_height  # 主单词行
+                        if var_lines:
+                            item_height += len(var_lines) * line_height  # 每一行变体占一行高度
 
                         # 检查空间
                         if current_y + item_height > page_height - margin_y:
@@ -432,16 +442,10 @@ if process_btn and uploaded_pdf and final_configs:
                                              color=(0.2, 0.2, 0.2))
                         current_y += line_height
 
-                        # 2. 绘制变体（如果有）
-                        if display_variations:
-                            var_text = "(" + ", ".join(display_variations) + ")"
-                            # 截断变体文本
-                            display_var_text = var_text if len(var_text) < truncation_limit + 5 else var_text[
-                                                                                                     :truncation_limit + 2] + "...)"
-
-                            # 稍微缩进绘制
-                            idx_page.insert_text((current_x + 10, current_y), display_var_text, fontsize=var_font_size,
-                                                 color=(0.5, 0.5, 0.5))  # 灰色
+                        # 2. 绘制变体（多行）
+                        for v_line in var_lines:
+                            idx_page.insert_text((current_x + 10, current_y), v_line, fontsize=var_font_size,
+                                                 color=(0.5, 0.5, 0.5))
                             current_y += line_height
 
                     current_y += line_height / 2
