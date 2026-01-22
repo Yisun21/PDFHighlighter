@@ -86,7 +86,8 @@ with st.sidebar:
     st.subheader("2. 词库管理")
 
     # 2.1 Excel 上传
-    uploaded_excels = st.file_uploader("📂 上传 Excel 词库（单词放在表格第一列）", type=['xlsx'], accept_multiple_files=True)
+    uploaded_excels = st.file_uploader("📂 上传 Excel 词库（单词放在表格第一列）", type=['xlsx'],
+                                       accept_multiple_files=True)
     if uploaded_excels:
         for excel_file in uploaded_excels:
             if excel_file.name not in st.session_state['word_libraries']:
@@ -98,8 +99,8 @@ with st.sidebar:
                     }
                     st.toast(f"✅ 已缓存: {excel_file.name} (共 {len(words)} 词)")
 
-    # 2.2 【核心修改】手动词库管理器 (新建/编辑/查看)
-    with st.expander("✍️ 手动添加/编辑词库", expanded=True):
+    # 2.2 【修改点 1】默认收起 expander (expanded=False)
+    with st.expander("✍️ 手动添加/编辑词库", expanded=False):
         # 获取当前所有词库列表
         current_lib_names = list(st.session_state['word_libraries'].keys())
         # 下拉菜单：选择模式（新建 或 编辑现有）
@@ -112,7 +113,7 @@ with st.sidebar:
         # 初始化编辑器变量
         target_lib_name = ""
         target_words_str = ""
-        target_color = "#FFFF00"
+        # 移除了 target_color 变量的初始化，因为这里不再编辑颜色
         is_editing_existing = False
 
         if edit_mode_selection == "➕ 新建词库":
@@ -126,7 +127,7 @@ with st.sidebar:
             existing_data = st.session_state['word_libraries'][target_lib_name]
             # 将列表转回字符串显示
             target_words_str = ", ".join(existing_data['words'])
-            target_color = existing_data.get('default_color', '#FFFF00')
+            # 移除了颜色获取逻辑
 
         # 单词输入说明
         st.caption("📝 **单词输入格式说明**：")
@@ -141,8 +142,7 @@ with st.sidebar:
             help="在这里编辑你的单词列表"
         )
 
-        # 颜色选择
-        color_input = st.color_picker("设置高亮颜色", value=target_color)
+        # 【修改点 2】移除了 color_picker (设置高亮颜色)
 
         # 按钮区域
         col_save, col_del = st.columns([1, 1])
@@ -156,9 +156,16 @@ with st.sidebar:
                     clean_words = sorted(list(set([w.strip() for w in raw_words if w.strip()])))
 
                     if clean_words:
+                        # 保持原有的颜色（如果是编辑），如果是新建则默认黄色
+                        # 因为这里不再设置颜色，所以需要小心保留原有颜色属性
+                        current_color = '#FFFF00'
+                        if is_editing_existing:
+                            current_color = st.session_state['word_libraries'][target_lib_name].get('default_color',
+                                                                                                    '#FFFF00')
+
                         st.session_state['word_libraries'][target_lib_name] = {
                             'words': clean_words,
-                            'default_color': color_input
+                            'default_color': current_color  # 继承或使用默认
                         }
                         st.success(f"已保存! 共 {len(clean_words)} 词")
                         st.rerun()  # 刷新页面以更新选择列表
@@ -177,37 +184,6 @@ with st.sidebar:
 
     st.subheader("3. 匹配与视觉")
     use_stemming = st.checkbox("启用智能词形匹配 (Stemming)", value=True)
-
-    # --- 索引页高级设置 ---
-    generate_index = st.checkbox("生成文末单词索引 (Index Page)", value=True)
-
-    idx_col_count = 4
-    idx_font_size = 10
-    index_target_libs = []
-    show_variants = False
-
-    if generate_index:
-        if use_stemming:
-            show_variants = st.checkbox("在索引中显示文内单词变体 (例如: run -> running, ran)", value=True)
-        else:
-            show_variants = False
-
-        default_col_index = 1 if show_variants else 3
-
-        col1, col2 = st.columns(2)
-        with col1:
-            idx_col_count = st.selectbox("排版列数", [1, 2, 3, 4], index=default_col_index)
-        with col2:
-            idx_font_size = st.number_input("索引字号", min_value=8, max_value=16, value=10, step=1)
-
-        available_libs = list(st.session_state['word_libraries'].keys())
-        st.caption("选择要包含在索引页中的词库：")
-        index_target_libs = st.multiselect(
-            "索引词库选择",
-            options=available_libs,
-            default=available_libs,
-            label_visibility="collapsed"
-        )
 
     st.write("重复单词高亮透明度 (1.0=原色, 0.0=透明)")
 
@@ -241,20 +217,26 @@ with st.sidebar:
 
     repeat_opacity = st.session_state['opacity_value']
 
+    # ---------------------------------------------------------
+    # 【逻辑重组】先选择高亮词库，再配置索引页
+    # ---------------------------------------------------------
+
     final_configs = {}
+    selected_highlight_libs = []  # 存储用户选中的高亮词库名
 
     if st.session_state['word_libraries']:
         all_libs = list(st.session_state['word_libraries'].keys())
-        selected = st.multiselect("选择高亮词库", all_libs, default=all_libs)
+        # 这里是“选择高亮词库”
+        selected_highlight_libs = st.multiselect("选择高亮词库", all_libs, default=all_libs)
 
-        if selected:
-            for name in selected:
+        if selected_highlight_libs:
+            for name in selected_highlight_libs:
                 col1, col2 = st.columns([3, 1])
                 with col1:
                     count = len(st.session_state['word_libraries'][name]['words'])
                     st.caption(f"**{name}** ({count} 词)")
                 with col2:
-                    # 这里的颜色选择器会显示该词库当前的颜色（可能是手动编辑时保存的）
+                    # 颜色设置仅在这里进行
                     c = st.color_picker(f"C-{name}", st.session_state['word_libraries'][name]['default_color'],
                                         key=f"c_{name}")
 
@@ -262,6 +244,43 @@ with st.sidebar:
                     'words': st.session_state['word_libraries'][name]['words'],
                     'rgb': hex_to_rgb(c)
                 }
+
+    st.divider()
+
+    # --- 索引页高级设置 (移到高亮选择下方，逻辑关联) ---
+    generate_index = st.checkbox("生成文末单词索引 (Index Page)", value=True)
+
+    idx_col_count = 4
+    idx_font_size = 10
+    index_target_libs = []
+    show_variants = False
+
+    if generate_index:
+        if use_stemming:
+            show_variants = st.checkbox("在索引中显示文内单词变体 (例如: run -> running, ran)", value=True)
+        else:
+            show_variants = False
+
+        default_col_index = 1 if show_variants else 3
+
+        col1, col2 = st.columns(2)
+        with col1:
+            idx_col_count = st.selectbox("排版列数", [1, 2, 3, 4], index=default_col_index)
+        with col2:
+            idx_font_size = st.number_input("索引字号", min_value=8, max_value=16, value=10, step=1)
+
+        # 【修改点 3】仅显示“已选高亮词库”供索引选择
+        if selected_highlight_libs:
+            st.caption("选择要包含在索引页中的词库：")
+            index_target_libs = st.multiselect(
+                "索引词库选择",
+                options=selected_highlight_libs,  # 数据源来自上方选中的词库
+                default=selected_highlight_libs,  # 默认全选
+                label_visibility="collapsed"
+            )
+        else:
+            st.warning("请先在上方选择至少一个高亮词库")
+            index_target_libs = []
 
     st.divider()
     process_btn = st.button("🚀 生成高亮文件", type="primary", use_container_width=True)
