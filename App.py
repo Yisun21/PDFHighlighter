@@ -5,9 +5,10 @@ import tempfile
 import os
 import gc
 import nltk
+import base64
 from nltk.stem import SnowballStemmer
 
-# 【新增】引入专用的 PDF 预览库
+# --- 引入专用的 PDF 预览库 ---
 try:
     from streamlit_pdf_viewer import pdf_viewer
 except ImportError:
@@ -78,7 +79,7 @@ with st.sidebar:
     st.divider()
 
     st.subheader("2. 词库（Excel）")
-    uploaded_excels = st.file_uploader("上传词库", type=['xlsx'], accept_multiple_files=True)
+    uploaded_excels = st.file_uploader("上传词库（单词放在表格第一列）", type=['xlsx'], accept_multiple_files=True)
 
     if uploaded_excels:
         for excel_file in uploaded_excels:
@@ -108,7 +109,7 @@ with st.sidebar:
     st.subheader("3. 匹配与视觉")
     use_stemming = st.checkbox("启用智能词形匹配 (Stemming)", value=True)
 
-    # --- 索引页设置 ---
+    # --- 索引页高级设置 ---
     generate_index = st.checkbox("生成文末单词索引 (Index Page)", value=True)
 
     idx_col_count = 4
@@ -117,11 +118,13 @@ with st.sidebar:
     show_variants = False
 
     if generate_index:
+        # 逻辑优化：只有开启 Stemming 才询问是否显示变体
         if use_stemming:
-            show_variants = st.checkbox("在索引中显示文内单词变体", value=True)
+            show_variants = st.checkbox("在索引中显示文内单词变体 (例如: run -> running, ran)", value=True)
         else:
             show_variants = False
 
+            # 动态设置默认列数索引
         default_col_index = 1 if show_variants else 3
 
         col1, col2 = st.columns(2)
@@ -208,7 +211,8 @@ if use_stemming:
 else:
     st.info("🔒 精确模式：仅匹配完全一致的单词。")
 
-st.markdown("Tip：**首次**出现的单词使用**深色**，**重复**出现的单词自动按**透明度**变浅。")
+st.markdown(
+    "Tip：**首次**出现的单词使用**深色**，**重复**出现的单词自动按**透明度**变浅；选择生成文末单词索引，将在文末附上**高亮单词列表**。")
 
 # --- 处理逻辑 ---
 if process_btn and uploaded_pdf and final_configs:
@@ -450,7 +454,6 @@ if process_btn and uploaded_pdf and final_configs:
         progress_bar.progress(100)
         status_text.text("✅ 完成！")
 
-        # 清理文件
         os.unlink(tmp_input_path)
         os.unlink(output_path)
         gc.collect()
@@ -478,11 +481,9 @@ if st.session_state['processed_pdf_data'] is not None:
         )
 
     with col_preview:
-        # 【修改点】使用 streamlit_pdf_viewer 库
-        # 这是目前 Streamlit 社区公认的渲染 PDF 最稳定的方案
-        if st.checkbox("👀 在线预览结果 PDF (展开/收起)", value=False):
+        # 【修改点】默认勾选预览 (value=True)
+        if st.checkbox("👀 在线预览结果 PDF (展开/收起)", value=True):
             try:
-                # 直接调用 pdf_viewer，传入二进制数据
                 pdf_viewer(input=st.session_state['processed_pdf_data'], width=800)
             except Exception as e:
                 st.error(f"预览加载失败: {e}")
