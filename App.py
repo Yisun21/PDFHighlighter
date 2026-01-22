@@ -118,13 +118,11 @@ with st.sidebar:
     show_variants = False
 
     if generate_index:
-        # 逻辑优化：只有开启 Stemming 才询问是否显示变体
         if use_stemming:
             show_variants = st.checkbox("在索引中显示文内单词变体 (例如: run -> running, ran)", value=True)
         else:
             show_variants = False
 
-            # 动态设置默认列数索引
         default_col_index = 1 if show_variants else 3
 
         col1, col2 = st.columns(2)
@@ -211,8 +209,7 @@ if use_stemming:
 else:
     st.info("🔒 精确模式：仅匹配完全一致的单词。")
 
-st.markdown(
-    "Tip：**首次**出现的单词使用**深色**，**重复**出现的单词自动按**透明度**变浅；选择生成文末单词索引，将在文末附上**高亮单词列表**。")
+st.markdown("Tip：**首次**出现的单词使用**深色**，**重复**出现的单词自动按**透明度**变浅。")
 
 # --- 处理逻辑 ---
 if process_btn and uploaded_pdf and final_configs:
@@ -449,7 +446,6 @@ if process_btn and uploaded_pdf and final_configs:
         # 将结果存入 Session State
         with open(output_path, "rb") as file:
             st.session_state['processed_pdf_data'] = file.read()
-            # 基础文件名
             st.session_state['processed_file_name'] = f"Highlight_{uploaded_pdf.name}"
 
         progress_bar.progress(100)
@@ -471,7 +467,6 @@ if st.session_state['processed_pdf_data'] is not None:
     st.subheader("📂 结果区域")
 
     # 1. 准备数据：获取总页数，用于设置范围选择器
-    # 注意：fitz.open 可以直接读取 bytes
     doc_result = fitz.open(stream=st.session_state['processed_pdf_data'], filetype="pdf")
     total_result_pages = len(doc_result)
 
@@ -479,34 +474,56 @@ if st.session_state['processed_pdf_data'] is not None:
     st.caption("选择预览和下载的页面范围：")
     col_p1, col_p2, col_opt = st.columns([1, 1, 2])
 
-    with col_p1:
-        start_page = st.number_input("起始页", min_value=1, max_value=total_result_pages, value=1, step=1)
-    with col_p2:
-        end_page = st.number_input("结束页", min_value=start_page, max_value=total_result_pages,
-                                   value=total_result_pages, step=1)
-
     with col_opt:
-        st.write("")  # 占位对齐
-        st.write("")
+        st.write("")  # 对齐占位
+        # 【修改点】增加“全部预览”勾选框，默认勾选
+        preview_all = st.checkbox("🔄 全部预览 (默认所有页)", value=True)
         only_dl_preview = st.checkbox("⬇️ 仅下载上方选中的预览页数", value=False)
+
+    # 逻辑：如果勾选“全部预览”，禁用输入框并设为1-Total；否则允许输入
+    if preview_all:
+        val_start = 1
+        val_end = total_result_pages
+        disable_inputs = True
+    else:
+        val_start = 1
+        val_end = total_result_pages
+        disable_inputs = False
+
+    with col_p1:
+        # 如果 preview_all 为 True，输入框显示 1 且不可编辑
+        # 否则显示当前值（session保持）或默认值
+        start_page = st.number_input(
+            "起始页",
+            min_value=1,
+            max_value=total_result_pages,
+            value=val_start if preview_all else 1,
+            step=1,
+            disabled=disable_inputs
+        )
+    with col_p2:
+        end_page = st.number_input(
+            "结束页",
+            min_value=start_page,
+            max_value=total_result_pages,
+            value=val_end if preview_all else total_result_pages,
+            step=1,
+            disabled=disable_inputs
+        )
 
     st.divider()
 
     # 3. 动态切片逻辑
-    # 如果用户选择的不是全部页面，或者只是为了预览，我们需要切片
-    # 默认 target_data 是完整数据
     target_pdf_data = st.session_state['processed_pdf_data']
 
     # 如果范围不是 1 到 最后一页，则进行切片
     if start_page != 1 or end_page != total_result_pages:
-        # 创建一个新的 PDF 对象用于存放切片
         doc_slice = fitz.open()
-        # insert_pdf 使用 0-based 索引，所以要 -1
         doc_slice.insert_pdf(doc_result, from_page=start_page - 1, to_page=end_page - 1)
         target_pdf_data = doc_slice.tobytes()
         doc_slice.close()
 
-    doc_result.close()  # 释放资源
+    doc_result.close()
 
     # 4. 确定下载用的数据和文件名
     if only_dl_preview:
@@ -529,7 +546,7 @@ if st.session_state['processed_pdf_data'] is not None:
         )
 
     with col_preview:
-        # 【修改点】默认不勾选预览 (value=False)
+        # 【修改点】在线预览默认不勾选 (value=False)
         if st.checkbox("👀 在线预览结果 PDF (展开/收起)", value=False):
             try:
                 # 预览始终显示当前切片范围 (target_pdf_data)
