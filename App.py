@@ -102,15 +102,24 @@ with st.sidebar:
     # --- 索引页高级设置 ---
     generate_index = st.checkbox("生成文末单词索引 (Index Page)", value=True)
 
-    # 只有勾选了才显示详细设置
+    # 默认值初始化
     idx_col_count = 4
     idx_font_size = 10
     index_target_libs = []
+    show_variants = False  # 默认不显示
 
     if generate_index:
+        # 【修改点 1】新增显示变体选项，并根据它决定默认列数
+        show_variants = st.checkbox("在索引中显示具体单词变体 (例如: run -> running, ran)", value=True)
+
+        # 动态设置默认列数索引：
+        # 如果显示变体(True)，index=1 (对应列表中的2列)
+        # 如果不显示(False)，index=3 (对应列表中的4列)
+        default_col_index = 1 if show_variants else 3
+
         col1, col2 = st.columns(2)
         with col1:
-            idx_col_count = st.selectbox("排版列数", [1, 2, 3, 4], index=3)  # 默认4列
+            idx_col_count = st.selectbox("排版列数", [1, 2, 3, 4], index=default_col_index)
         with col2:
             idx_font_size = st.number_input("索引字号", min_value=8, max_value=16, value=10, step=1)
 
@@ -330,6 +339,7 @@ if process_btn and uploaded_pdf and final_configs:
 
         # --- 动态索引排版逻辑 ---
         if generate_index:
+            # 过滤数据
             final_index_data = {
                 k: v for k, v in index_data_by_lib.items()
                 if k in index_target_libs
@@ -357,16 +367,16 @@ if process_btn and uploaded_pdf and final_configs:
                 title_font_size = idx_font_size + 8
                 lib_title_font_size = idx_font_size + 2
 
-                var_font_size = max(6, idx_font_size - 2)  # 变体字号
+                var_font_size = max(6, idx_font_size - 2)
 
                 # 主单词截断长度
                 avg_char_width = idx_font_size * 0.55
                 truncation_limit = int(col_width / avg_char_width) - 2
                 if truncation_limit < 5: truncation_limit = 5
 
-                # 【新增】变体单词换行阈值 (因为变体字号小，一行能塞更多字)
+                # 变体单词换行阈值
                 var_avg_char_width = var_font_size * 0.55
-                var_truncation_limit = int(col_width / var_avg_char_width) - 4  # -4 for indentation
+                var_truncation_limit = int(col_width / var_avg_char_width) - 4
 
                 current_col = 0
                 current_y = margin_y
@@ -395,36 +405,36 @@ if process_btn and uploaded_pdf and final_configs:
                     current_y += header_height
 
                     for origin_word in sorted_origins:
-                        found_variations = words_dict[origin_word]
-                        display_variations = [
-                            v for v in found_variations
-                            if v.lower() != origin_word.lower()
-                        ]
-                        display_variations = sorted(list(set(display_variations)))
 
-                        # --- 【修改点】变体自动换行预计算 ---
+                        # 【修改点 2】 根据是否勾选 show_variants 来决定是否准备变体数据
+                        display_variations = []
+                        if show_variants:
+                            found_variations = words_dict[origin_word]
+                            display_variations = [
+                                v for v in found_variations
+                                if v.lower() != origin_word.lower()
+                            ]
+                            display_variations = sorted(list(set(display_variations)))
+
+                        # 变体自动换行预计算
                         var_lines = []
                         if display_variations:
                             current_var_line = "("
                             for i, var in enumerate(display_variations):
                                 separator = ", " if i > 0 else ""
-                                # 检查加入这个词是否会超出一行
                                 if len(current_var_line + separator + var) > var_truncation_limit:
-                                    # 换行前加个逗号（如果是中间换行，通常不需要，但为了美观可选择保留）
-                                    # 这里简单处理：直接把当前累积的存入，开启新行
-                                    if i > 0:  # 如果不是第一个词，上一行补逗号
-                                        current_var_line += ","
+                                    if i > 0: current_var_line += ","
                                     var_lines.append(current_var_line)
-                                    current_var_line = "  " + var  # 新行缩进
+                                    current_var_line = "  " + var
                                 else:
                                     current_var_line += separator + var
                             current_var_line += ")"
                             var_lines.append(current_var_line)
 
                         # 计算本条目需要的总高度
-                        item_height = line_height  # 主单词行
+                        item_height = line_height
                         if var_lines:
-                            item_height += len(var_lines) * line_height  # 每一行变体占一行高度
+                            item_height += len(var_lines) * line_height
 
                         # 检查空间
                         if current_y + item_height > page_height - margin_y:
